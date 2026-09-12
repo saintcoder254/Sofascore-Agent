@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: elite-matchmaster-sofascore-agent
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: POLL_SECONDS
+        value: "60"
+      - key: STALE_AFTER_SECONDS
+        value: "180"
+      - key: DATABASE_PATH
+        value: "/data/matchmaster.db"

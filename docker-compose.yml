@@ -1,0 +1,15 @@
+services:
+  sofascore-agent:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      POLL_SECONDS: "60"
+      STALE_AFTER_SECONDS: "180"
+      DATABASE_PATH: "/data/matchmaster.db"
+    volumes:
+      - matchmaster-data:/data
+    restart: unless-stopped
+
+volumes:
+  matchmaster-data:
