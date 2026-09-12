@@ -1,21 +1,53 @@
-import hashlib, json, time, datetime
+import hashlib, json, time, datetime, logging
 import httpx
+
+logger = logging.getLogger("emm.sofascore")
 
 class SofaScoreAdapter:
     def __init__(self, base_url, timeout=15):
         self.base_url = base_url.rstrip("/")
         self.client = httpx.AsyncClient(
             timeout=timeout,
-            headers={"User-Agent": "EliteMatchMaster-SofaScore-Agent/1.0"}
+            headers={"User-Agent": "EliteMatchMaster-SofaScore-Agent/1.1"}
         )
+        self.metrics = {
+            "requests_total": 0,
+            "requests_success": 0,
+            "requests_failed": 0,
+            "last_request_at": None,
+            "last_success_at": None,
+            "last_error_at": None,
+            "last_status_code": None,
+            "last_path": None,
+            "last_latency_ms": None,
+        }
 
     async def close(self):
         await self.client.aclose()
 
     async def get_json(self, path):
-        r = await self.client.get(f"{self.base_url}/{path.lstrip('/')}")
-        r.raise_for_status()
-        return r.json()
+        started = time.perf_counter()
+        self.metrics["requests_total"] += 1
+        self.metrics["last_request_at"] = time.time()
+        self.metrics["last_path"] = path
+        try:
+            r = await self.client.get(f"{self.base_url}/{path.lstrip('/')}")
+            latency = round((time.perf_counter() - started) * 1000, 1)
+            self.metrics["last_latency_ms"] = latency
+            self.metrics["last_status_code"] = r.status_code
+            r.raise_for_status()
+            payload = r.json()
+            self.metrics["requests_success"] += 1
+            self.metrics["last_success_at"] = time.time()
+            logger.info("SOFASCORE_HTTP status=%s path=%s latency_ms=%s", r.status_code, path, latency)
+            return payload
+        except Exception as exc:
+            latency = round((time.perf_counter() - started) * 1000, 1)
+            self.metrics["last_latency_ms"] = latency
+            self.metrics["requests_failed"] += 1
+            self.metrics["last_error_at"] = time.time()
+            logger.error("SOFASCORE_HTTP_ERROR path=%s latency_ms=%s error=%r", path, latency, exc)
+            raise
 
     async def today_events(self):
         d = datetime.datetime.now(datetime.timezone.utc).date().isoformat()

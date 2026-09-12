@@ -1,29 +1,20 @@
-# Elite MatchMaster — SofaScore Persistent Acquisition Agent
+# Elite MatchMaster SofaScore Acquisition Agent
 
-Deployable service for continuously polling SofaScore football data and exposing a clean feed to Elite MatchMaster.
+FastAPI acquisition service for Elite MatchMaster. It polls SofaScore's public football API on a configurable interval (default 60 seconds), caches event snapshots, applies freshness/conflict checks, and exposes telemetry for verification.
 
-Default live polling interval: 60 seconds.
-The service fails closed when cached data is stale.
+## Verification telemetry
+- `GET /health` — service + ingestion health
+- `GET /status` — full poller/source telemetry
+- `GET /telemetry` — explicit ingestion verification endpoint
+- `GET /fusion/feed` — freshness-gated MatchMaster feed plus telemetry
+- `POST /poll` — immediate acquisition test
 
-## Run locally
-python -m venv .venv
-source .venv/bin/activate
+Telemetry records poll count, successful/failed polls, consecutive failures, event counts, timestamps, HTTP status, request count, latency, last endpoint, and whether the latest successful acquisition is still fresh.
+
+## Local
+```bash
 pip install -r requirements.txt
-uvicorn app:app --host 0.0.0.0 --port 8080
+uvicorn app:app --host 0.0.0.0 --port 8000
+```
 
-## Endpoints
-GET /health
-GET /status
-GET /live
-GET /fixture/{event_id}
-GET /events/today
-POST /poll
-GET /fusion/feed
-
-## Environment
-POLL_SECONDS=60
-STALE_AFTER_SECONDS=180
-SOFASCORE_BASE=https://www.sofascore.com/api/v1
-DATABASE_PATH=matchmaster.db
-
-This package is deployable code. It is not a claim that a persistent cloud process is already running.
+Default poll interval is 60 seconds. Override with `POLL_SECONDS`. Default stale threshold is 180 seconds (`STALE_AFTER_SECONDS`).
