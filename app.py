@@ -32,12 +32,15 @@ async def poll_once():
     logger.info("POLL_START number=%s source=fusion interval_seconds=%s",poll_no,POLL_SECONDS)
     try:
         data=await adapter.today_events(); source=data.get("source",adapter.active_source or "unknown"); state["active_source"]=source; events=data.get("events",[]); stored=skipped=0
+        conflicts = data.get("verification_conflicts", []) or []
+        conflict_ids = {str(x.get("active_id")) for x in conflicts}
         for event in events:
             eid=str(event.get("id",""))
             if not eid: skipped+=1; continue
+            event["verification"] = {"source":"futbol24", "checked_at":data.get("verification",{}).get("futbol24",{}).get("retrieved_at"), "conflict":eid in conflict_ids}
             prev=store.get_current(eid); conflict.compare(prev["payload"] if prev else None,event); store.put(eid,time.time(),adapter.payload_hash(event),event); stored+=1
         duration=round((time.perf_counter()-started)*1000,1); state.update({"items":len(events),"last_poll_items":stored,"last_success":time.time(),"last_error":None,"last_poll_duration_ms":duration,"polls_success":state["polls_success"]+1,"consecutive_failures":0})
-        logger.info("POLL_SUCCESS number=%s source=%s events=%s stored=%s skipped=%s duration_ms=%s",poll_no,source,len(events),stored,skipped,duration); return len(events)
+        logger.info("POLL_SUCCESS number=%s source=%s events=%s stored=%s skipped=%s verification_conflicts=%s duration_ms=%s",poll_no,source,len(events),stored,skipped,len(conflicts),duration); return len(events)
     except Exception as exc:
         duration=round((time.perf_counter()-started)*1000,1); state.update({"last_error":repr(exc),"last_poll_duration_ms":duration,"polls_failed":state["polls_failed"]+1,"consecutive_failures":state["consecutive_failures"]+1}); logger.error("POLL_FAILED number=%s error=%r",poll_no,exc); raise
 
@@ -103,6 +106,13 @@ async def record_prediction_batch(item:PredictionBatchIn):
     for p in item.predictions:
         store.add_prediction(prediction_id=p.prediction_id,fixture_id=p.fixture_id,market=p.market,predicted_probability=p.predicted_probability,selection=p.selection,odds=p.odds,model_version=p.model_version,features=p.features)
     return {"ok":True,"recorded":len(item.predictions),"prediction_ids":[p.prediction_id for p in item.predictions]}
+@app.post("/predictions/umios")
+async def record_umios_predictions(item:PredictionBatchIn):
+    """Stable UMIOS -> learning bridge. UMIOS can push validated predictions here."""
+    for p in item.predictions:
+        store.add_prediction(prediction_id=p.prediction_id,fixture_id=p.fixture_id,market=p.market,predicted_probability=p.predicted_probability,selection=p.selection,odds=p.odds,model_version=p.model_version,features=p.features)
+    logger.info("UMIOS_PREDICTIONS_INGESTED count=%s",len(item.predictions))
+    return {"ok":True,"source":"umios","recorded":len(item.predictions),"prediction_ids":[p.prediction_id for p in item.predictions]}
 @app.post("/predictions/{prediction_id}/outcome")
 async def record_outcome(prediction_id:str,item:OutcomeIn): store.record_outcome(prediction_id,item.outcome); return {"ok":True,"prediction_id":prediction_id,"outcome":item.outcome}
 @app.get("/learning")
