@@ -9,6 +9,7 @@ class Store:
         self.db.execute('CREATE TABLE IF NOT EXISTS evolution_runs(run_id TEXT PRIMARY KEY,created_at REAL NOT NULL,result_json TEXT NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS evolution_candidates(candidate_id TEXT PRIMARY KEY,created_at REAL NOT NULL,candidate_json TEXT NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS external_observations(id INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL,retrieved_at REAL NOT NULL,fixture_key TEXT NOT NULL,home TEXT,away TEXT,kickoff TEXT,market TEXT,selection TEXT,raw_json TEXT NOT NULL,outcome REAL,outcome_at REAL)')
+        self.db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_external_dedupe ON external_observations(source,fixture_key,kickoff,market,selection)')
         self.db.commit()
     def get_current(self,fixture_id):
         r=self.db.execute('SELECT retrieved_at,payload_hash,payload FROM current WHERE fixture_id=?',(fixture_id,)).fetchone(); return None if not r else {'retrieved_at':r[0],'payload_hash':r[1],'payload':json.loads(r[2])}
@@ -40,7 +41,11 @@ class Store:
         for obs in observations or []:
             h,a=obs.get('home'),obs.get('away')
             if not h or not a: continue
-            raw=dict(obs); raw.setdefault('source',source); self.db.execute('INSERT INTO external_observations(source,retrieved_at,fixture_key,home,away,kickoff,market,selection,raw_json,outcome,outcome_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(source,ts,self.external_fixture_key(h,a),h,a,obs.get('kickoff_local'),obs.get('market'),obs.get('prediction'),json.dumps(raw,separators=(',',':')),None,None)); added+=1
+            raw=dict(obs); raw.setdefault('source',source)
+            params=(source,self.external_fixture_key(h,a),obs.get('kickoff_local'),obs.get('market'),obs.get('prediction'))
+            exists=self.db.execute('SELECT id FROM external_observations WHERE source=? AND fixture_key=? AND kickoff IS ? AND market IS ? AND selection IS ? LIMIT 1',params).fetchone()
+            if exists: continue
+            self.db.execute('INSERT OR IGNORE INTO external_observations(source,retrieved_at,fixture_key,home,away,kickoff,market,selection,raw_json,outcome,outcome_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(source,ts,self.external_fixture_key(h,a),h,a,obs.get('kickoff_local'),obs.get('market'),obs.get('prediction'),json.dumps(raw,separators=(',',':')),None,None)); added+=1
         self.db.commit(); return added
     def external_summary(self,source=None):
         where='' if source is None else ' WHERE source=?'; args=() if source is None else (source,); count=self.db.execute('SELECT COUNT(*) FROM external_observations'+where,args).fetchone()[0]; latest=self.db.execute('SELECT MAX(retrieved_at) FROM external_observations'+where,args).fetchone()[0]; resolved=self.db.execute('SELECT COUNT(*) FROM external_observations'+where+(' AND outcome IS NOT NULL' if where else ' WHERE outcome IS NOT NULL'),args).fetchone()[0]; return {'source':source or 'all','observations':count,'resolved':resolved,'latest_at':latest}
