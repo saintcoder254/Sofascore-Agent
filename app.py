@@ -2,7 +2,7 @@ import asyncio, os, time, logging, traceback, uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from sofascore_adapter import SofaScoreAdapter
+from feed_fusion import FeedFusionAdapter
 from integrity import FreshnessGate, ConflictGate
 from store import Store
 from evolution import EvolutionAgent
@@ -20,7 +20,7 @@ EVOLUTION_SECONDS = int(os.getenv("EVOLUTION_SECONDS", "21600"))
 EVOLUTION_MIN_SAMPLES = int(os.getenv("EVOLUTION_MIN_SAMPLES", "100"))
 RESEARCH_SECONDS = int(os.getenv("RESEARCH_SECONDS", "21600"))
 
-adapter = SofaScoreAdapter(BASE, TIMEOUT)
+adapter = FeedFusionAdapter(BASE, TIMEOUT)
 store = Store(DB)
 fresh = FreshnessGate(STALE_AFTER)
 conflict = ConflictGate()
@@ -34,6 +34,7 @@ state = {
     "items": 0, "running": False,
     "evolution_running": False, "last_evolution_at": None,
     "research_running": False, "last_research_at": None,
+    "active_source": None,
 }
 
 class PredictionIn(BaseModel):
@@ -54,9 +55,11 @@ async def poll_once():
     state["last_poll"] = time.time()
     state["polls_total"] += 1
     poll_no = state["polls_total"]
-    logger.info("POLL_START number=%s source=sofascore interval_seconds=%s", poll_no, POLL_SECONDS)
+    logger.info("POLL_START number=%s source=fusion interval_seconds=%s", poll_no, POLL_SECONDS)
     try:
         data = await adapter.today_events()
+        source = data.get("source", adapter.active_source or "unknown")
+        state["active_source"] = source
         events = data.get("events", [])
         stored = 0
         skipped = 0
@@ -72,7 +75,7 @@ async def poll_once():
             stored += 1
         duration = round((time.perf_counter() - started) * 1000, 1)
         state.update({"items": len(events), "last_poll_items": stored, "last_success": time.time(), "last_error": None, "last_poll_duration_ms": duration, "polls_success": state["polls_success"] + 1, "consecutive_failures": 0})
-        logger.info("POLL_SUCCESS number=%s http_status=%s events=%s stored=%s skipped=%s duration_ms=%s retrieved_at=%.3f", poll_no, adapter.metrics.get("last_status_code"), len(events), stored, skipped, duration, state["last_success"])
+        logger.info("POLL_SUCCESS number=%s source=%s events=%s stored=%s skipped=%s duration_ms=%s retrieved_at=%.3f", poll_no, source, len(events), stored, skipped, duration, state["last_success"])
         return len(events)
     except Exception as exc:
         duration = round((time.perf_counter() - started) * 1000, 1)
@@ -93,7 +96,7 @@ async def polling_loop():
             count = await poll_once()
             backoff = POLL_SECONDS
             state["next_poll_at"] = time.time() + backoff
-            logger.info("POLL_SCHEDULED next_in_seconds=%s items=%s", backoff, count)
+            logger.info("POLL_SCHEDULED next_in_seconds=%s items=%s source=%s", backoff, count, state["active_source"])
         except Exception:
             backoff = min(max(POLL_SECONDS, backoff * 2), 900)
             state["next_poll_at"] = time.time() + backoff
@@ -138,14 +141,31 @@ async def lifespan(app):
     await asyncio.gather(poll_task, evolution_task, research_task, return_exceptions=True)
     await adapter.close()
 
-app = FastAPI(title="Elite MatchMaster SofaScore Acquisition Agent", lifespan=lifespan)
+app = FastAPI(title="Elite MatchMaster Feed Fusion Acquisition Agent", lifespan=lifespan)
 
 def telemetry_payload():
     now = time.time()
     last_success = state["last_success"]
     age = None if last_success is None else round(now - last_success, 1)
     fresh_enough = last_success is not None and age <= STALE_AFTER
-    return {"service": "sofascore-acquisition-agent", "source": "sofascore", "running": state["running"], "poll_interval_seconds": POLL_SECONDS, "stale_after_seconds": STALE_AFTER, "last_success_age_seconds": age, "data_fresh": fresh_enough, "ingestion_verified": bool(fresh_enough and state["polls_success"] > 0 and adapter.metrics["requests_success"] > 0), "poller": dict(state), "http": dict(adapter.metrics), "evolution": evolution.status(), "research": {"running": state["research_running"], "last_research_at": state["last_research_at"], "interval_seconds": RESEARCH_SECONDS}, "generated_at": now}
+    fusion_metrics = dict(adapter.metrics)
+    primary_metrics = dict(adapter.primary_metrics)
+    return {
+        "service": "feed-fusion-acquisition-agent",
+        "source": state["active_source"] or adapter.active_source,
+        "running": state["running"],
+        "poll_interval_seconds": POLL_SECONDS,
+        "stale_after_seconds": STALE_AFTER,
+        "last_success_age_seconds": age,
+        "data_fresh": fresh_enough,
+        "ingestion_verified": bool(fresh_enough and state["polls_success"] > 0),
+        "poller": dict(state),
+        "fusion": fusion_metrics,
+        "primary_sofascore": primary_metrics,
+        "evolution": evolution.status(),
+        "research": {"running": state["research_running"], "last_research_at": state["last_research_at"], "interval_seconds": RESEARCH_SECONDS},
+        "generated_at": now,
+    }
 
 @app.get("/health")
 async def health():
@@ -195,7 +215,7 @@ async def record_outcome(prediction_id: str, item: OutcomeIn):
 @app.get("/live")
 async def live():
     rows = store.current()
-    return {"count": len(rows), "items": rows}
+    return {"count": len(rows), "items": rows, "source": state["active_source"] or adapter.active_source}
 
 @app.get("/fixture/{event_id}")
 async def fixture(event_id: str):
@@ -216,7 +236,7 @@ async def events_today():
 async def manual_poll():
     try:
         count = await poll_once()
-        return {"ok": True, "items": count, "retrieved_at": time.time(), "telemetry": telemetry_payload()}
+        return {"ok": True, "items": count, "retrieved_at": time.time(), "source": state["active_source"], "telemetry": telemetry_payload()}
     except Exception as exc:
         raise HTTPException(502, str(exc))
 
@@ -226,4 +246,4 @@ async def fusion_feed():
     for row in store.current():
         status, age, reason = fresh.evaluate(row["retrieved_at"])
         output.append({"fixture_id": row["fixture_id"], "eligible": status == "FRESH", "integrity_status": status, "age_seconds": age, "reason": reason, "data": row["payload"] if status == "FRESH" else None})
-    return {"source": "sofascore", "generated_at": time.time(), "telemetry": telemetry_payload(), "items": output}
+    return {"source": state["active_source"] or adapter.active_source, "generated_at": time.time(), "telemetry": telemetry_payload(), "items": output}
