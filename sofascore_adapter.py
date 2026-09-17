@@ -27,6 +27,11 @@ class SofaScoreAdapter:
                 "Accept-Language": "en-US,en;q=0.9",
                 "Referer": "https://www.sofascore.com/",
                 "Origin": "https://www.sofascore.com",
+                # SofaScore's internal API expects X-Requested-With on XHR-style calls.
+                "X-Requested-With": "XMLHttpRequest",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
             },
         )
 
@@ -43,7 +48,7 @@ class SofaScoreAdapter:
         }
 
     async def close(self):
-        # curl_cffi AsyncSession uses close(), not aclose()
+        # curl_cffi AsyncSession.close() is asynchronous.
         await self.client.close()
 
     async def get_json(self, path):
