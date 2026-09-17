@@ -53,6 +53,29 @@ class Store:
     def prediction_count(self): return self.db.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
     def resolved_prediction_count(self): return self.db.execute("SELECT COUNT(*) FROM predictions WHERE outcome IS NOT NULL").fetchone()[0]
 
+    def performance_summary(self):
+        rows = self.predictions_with_outcomes()
+        if not rows:
+            return {"samples": 0, "wins": 0, "losses": 0, "pushes": 0, "brier": None, "roi": None, "profit_units": 0.0, "markets": {}}
+        brier = sum((r["predicted_probability"] - r["outcome"]) ** 2 for r in rows) / len(rows)
+        wins = sum(1 for r in rows if r["outcome"] == 1.0)
+        losses = sum(1 for r in rows if r["outcome"] == 0.0)
+        pushes = len(rows) - wins - losses
+        profit = 0.0
+        staked = 0.0
+        markets = {}
+        for r in rows:
+            odds = r.get("odds")
+            if odds is not None and odds > 1:
+                staked += 1.0
+                profit += (odds - 1.0) if r["outcome"] == 1.0 else -1.0 if r["outcome"] == 0.0 else 0.0
+            key = str(r["market"])
+            bucket = markets.setdefault(key, {"samples": 0, "wins": 0, "losses": 0, "brier": 0.0})
+            bucket["samples"] += 1; bucket["wins"] += int(r["outcome"] == 1.0); bucket["losses"] += int(r["outcome"] == 0.0); bucket["brier"] += (r["predicted_probability"] - r["outcome"]) ** 2
+        for bucket in markets.values():
+            bucket["brier"] /= bucket["samples"]
+        return {"samples": len(rows), "wins": wins, "losses": losses, "pushes": pushes, "brier": brier, "roi": None if not staked else profit / staked, "profit_units": profit, "markets": markets}
+
     def add_evolution_run(self, run_id, result):
         self.db.execute("INSERT OR REPLACE INTO evolution_runs VALUES(?,?,?)", (run_id, time.time(), json.dumps(result, separators=(",", ":"))))
         self.db.commit()
