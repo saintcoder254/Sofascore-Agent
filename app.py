@@ -25,12 +25,12 @@ class OutcomeIn(BaseModel): outcome:float=Field(ge=0,le=1)
 async def poll_once():
     started=time.perf_counter(); state["last_poll"]=time.time(); state["polls_total"]+=1; poll_no=state["polls_total"]
     try:
-        data=await adapter.today_events(); source=data.get("source",adapter.active_source or "unknown"); state["active_source"]=source; events=data.get("events",[]); stored=0; conflicts=data.get("verification_conflicts",[]) or []; conflict_ids={str(x.get("active_id")) for x in conflicts}
+        data=await adapter.today_events(); source=data.get("source",adapter.active_source or "unknown"); state["active_source"]=source; events=data.get("events",[]); stored=0; conflicts=data.get("verification_conflicts",[]) or []; conflict_ids={str(x.get("active_id")) for x in conflicts}; verification_bundle=data.get("verification",{}) or {}
         for event in events:
             eid=str(event.get("id",""))
             if not eid: continue
-            event["verification"]={"source":"futbol24","checked_at":data.get("verification",{}).get("futbol24",{}).get("retrieved_at"),"conflict":eid in conflict_ids}; prev=store.get_current(eid); conflict.compare(prev["payload"] if prev else None,event); store.put(eid,time.time(),adapter.payload_hash(event)); stored+=1
-        s24=data.get("verification",{}).get("scores24",{}) or {}; s24_added=store.add_external_observations("scores24",s24.get("observations",[]),s24.get("retrieved_at")); duration=round((time.perf_counter()-started)*1000,1); state.update({"items":len(events),"last_poll_items":stored,"last_success":time.time(),"last_error":None,"last_poll_duration_ms":duration,"polls_success":state["polls_success"]+1,"consecutive_failures":0}); logger.info("POLL_SUCCESS source=%s events=%s stored=%s scores24=%s conflicts=%s duration_ms=%s",source,len(events),stored,s24_added,len(conflicts),duration);return len(events)
+            event["verification"]={**verification_bundle,"event_conflict":eid in conflict_ids}; prev=store.get_current(eid); conflict.compare(prev["payload"] if prev else None,event); store.put(eid,time.time(),adapter.payload_hash(event)); stored+=1
+        s24=verification_bundle.get("scores24",{}) or {}; s24_added=store.add_external_observations("scores24",s24.get("observations",[]),s24.get("retrieved_at")); duration=round((time.perf_counter()-started)*1000,1); state.update({"items":len(events),"last_poll_items":stored,"last_success":time.time(),"last_error":None,"last_poll_duration_ms":duration,"polls_success":state["polls_success"]+1,"consecutive_failures":0}); logger.info("POLL_SUCCESS source=%s events=%s stored=%s scores24=%s conflicts=%s verification_sources=%s duration_ms=%s",source,len(events),stored,s24_added,len(conflicts),len((verification_bundle.get("final_results") or {}).get("sources",[])),duration);return len(events)
     except Exception as exc:
         duration=round((time.perf_counter()-started)*1000,1);state.update({"last_error":repr(exc),"last_poll_duration_ms":duration,"polls_failed":state["polls_failed"]+1,"consecutive_failures":state["consecutive_failures"]+1});logger.error("POLL_FAILED number=%s error=%r",poll_no,exc);raise
 async def polling_loop():
@@ -66,7 +66,7 @@ async def source_learning_loop():
 async def verification_loop():
     state["verification_learning_running"]=True
     while True:
-        try:r=verification_learning.run();state["last_verification_learning_at"]=time.time();logger.info("VERIFICATION_LEARNING resolved=%s blocked=%s unresolved=%s",r["resolved"],r["blocked_conflicts"],r["unresolved"])
+        try:r=verification_learning.run();state["last_verification_learning_at"]=time.time();logger.info("VERIFICATION_LEARNING resolved=%s external=%s blocked=%s unresolved=%s",r["resolved"],r.get("external_resolved",0),r["blocked_conflicts"],r["unresolved"])
         except Exception as exc:logger.error("VERIFICATION_LEARNING_FAILED error=%r",exc)
         await asyncio.sleep(VERIFICATION_SECONDS)
 @asynccontextmanager
@@ -100,7 +100,7 @@ async def record_prediction_batch(item:PredictionBatchIn):
     return {"ok":True,"recorded":len(item.predictions),"prediction_ids":[p.prediction_id for p in item.predictions]}
 @app.post("/predictions/umios")
 async def record_umios_predictions(item:PredictionBatchIn):
-    for p in item.predictions:store.add_prediction(prediction_id=p.prediction_id,fixture_id=p.fixture_id,market=p.market,predicted_probability=p.predicted_probability,selection=p.selection,odds=p.odds,model_version=p.model_version,features=p.features)
+    for p in item.predictions:store.add_prediction(prediction_id=p.prediction_id,fixture_id=p.fixture_id,market=p.market, predicted_probability=p.predicted_probability,selection=p.selection,odds=p.odds,model_version=p.model_version,features=p.features)
     return {"ok":True,"source":"umios","recorded":len(item.predictions),"prediction_ids":[p.prediction_id for p in item.predictions]}
 @app.post("/predictions/{prediction_id}/outcome")
 async def record_outcome(prediction_id:str,item:OutcomeIn):store.record_outcome(prediction_id,item.outcome);return {"ok":True,"prediction_id":prediction_id,"outcome":item.outcome}
