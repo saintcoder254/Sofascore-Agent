@@ -1,5 +1,6 @@
 import re
 import time
+from fixture_matching import FixtureMatcher
 
 
 class VerificationLearningAgent:
@@ -8,22 +9,11 @@ class VerificationLearningAgent:
         self.store = store
         self.verifier = verifier
         self.min_sources = max(2, int(min_sources))
+        self.matcher = FixtureMatcher()
 
-    @staticmethod
-    def _name(value):
-        value = re.sub(r"[^a-z0-9 ]+", " ", str(value or "").lower())
-        value = re.sub(r"\b(fc|cf|sc|afc|ac|club|women|w|u21|u23|ii|b)\b", " ", value)
-        return re.sub(r"\s+", " ", value).strip()
-
-    def _matching_events(self, events, home, away):
-        h, a = self._name(home), self._name(away)
-        out = []
-        for event in events or []:
-            eh = self._name((event.get("homeTeam") or {}).get("name"))
-            ea = self._name((event.get("awayTeam") or {}).get("name"))
-            if eh == h and ea == a:
-                out.append(event)
-        return out
+    def _matching_events(self, event, events):
+        matches = self.matcher.find(event, events)
+        return [candidate for _, candidate, _ in matches]
 
     def _payloads_for_fixture(self, fixture, home=None, away=None):
         payload = fixture.get("payload") or {}
@@ -40,23 +30,35 @@ class VerificationLearningAgent:
             elif isinstance(value, list): candidates.extend(value)
         if not candidates and home is None and away is None:
             candidates.append(payload)
-        if home is None: return candidates
-        matched = []
-        for event in candidates:
-            if self._name((event.get("homeTeam") or {}).get("name")) == self._name(home) and self._name((event.get("awayTeam") or {}).get("name")) == self._name(away):
-                matched.append(event)
-        return matched
+        if home is None:
+            return candidates
+        anchor = {"homeTeam": {"name": home}, "awayTeam": {"name": away}, "date": None}
+        return self._matching_events(anchor, candidates)
 
     def _verify(self, payloads):
         consensus = self.verifier.verify_consensus(payloads, required=self.min_sources)
         return consensus if consensus.get("status") == "VERIFIED" else None
 
+    def _find_fixture(self, home, away):
+        anchor = {"homeTeam": {"name": home}, "awayTeam": {"name": away}, "date": None}
+        candidates = []
+        for row in self.store.current():
+            p = row.get("payload") or {}
+            if (p.get("homeTeam") or {}).get("name") and (p.get("awayTeam") or {}).get("name"):
+                candidates.append({**p, "_row": row})
+        matches = self.matcher.find(anchor, candidates)
+        return matches[0][1].get("_row") if matches else None
+
     def _settle_external(self):
         resolved = blocked = unresolved = 0
         for row in self.store.external_pending():
-            fixture = self.store.find_current_fixture(row["home"], row["away"])
+            fixture = self._find_fixture(row["home"], row["away"])
             if not fixture:
                 unresolved += 1
+                continue
+            payload = fixture.get("payload") or {}
+            if self.store.fixture_has_conflict(payload):
+                blocked += 1
                 continue
             payloads = self._payloads_for_fixture(fixture, row["home"], row["away"])
             consensus = self._verify(payloads)
@@ -94,4 +96,4 @@ class VerificationLearningAgent:
             self.store.record_outcome(row["prediction_id"], outcome, time.time())
             resolved += 1
         ext_resolved, ext_blocked, ext_unresolved = self._settle_external()
-        return {"resolved": resolved + ext_resolved,"external_resolved": ext_resolved,"blocked_conflicts": blocked + ext_blocked,"unresolved": unresolved + ext_unresolved,"external_unresolved": ext_unresolved,"required_sources": self.min_sources}
+        return {"resolved": resolved + ext_resolved, "external_resolved": ext_resolved, "blocked_conflicts": blocked + ext_blocked, "unresolved": unresolved + ext_unresolved, "external_unresolved": ext_unresolved, "required_sources": self.min_sources}
