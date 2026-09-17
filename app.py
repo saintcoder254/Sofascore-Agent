@@ -1,4 +1,4 @@
-import asyncio, os, time, logging, traceback, uuid
+import asyncio, os, time, logging, uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -24,6 +24,7 @@ class PredictionIn(BaseModel):
     prediction_id: str = Field(default_factory=lambda: str(uuid.uuid4())); fixture_id: str; market: str
     predicted_probability: float = Field(ge=0, le=1); selection: str | None = None; odds: float | None = Field(default=None, gt=1)
     model_version: str = "unknown"; features: dict = Field(default_factory=dict)
+class PredictionBatchIn(BaseModel): predictions: list[PredictionIn] = Field(min_length=1, max_length=500)
 class OutcomeIn(BaseModel): outcome: float = Field(ge=0, le=1)
 
 async def poll_once():
@@ -78,7 +79,7 @@ app=FastAPI(title="Elite MatchMaster Feed Fusion Acquisition Agent",lifespan=lif
 
 def telemetry_payload():
     now=time.time(); age=None if state["last_success"] is None else round(now-state["last_success"],1); fresh_enough=state["last_success"] is not None and age<=STALE_AFTER
-    return {"service":"feed-fusion-acquisition-agent","source":state["active_source"] or adapter.active_source,"running":state["running"],"poll_interval_seconds":POLL_SECONDS,"stale_after_seconds":STALE_AFTER,"last_success_age_seconds":age,"data_fresh":fresh_enough,"ingestion_verified":bool(fresh_enough and state["polls_success"]>0),"poller":dict(state),"fusion":dict(adapter.metrics),"primary_sofascore":dict(adapter.primary_metrics),"evolution":evolution.status(),"research":{"running":state["research_running"],"last_research_at":state["last_research_at"]},"generated_at":now}
+    return {"service":"feed-fusion-acquisition-agent","source":state["active_source"] or adapter.active_source,"running":state["running"],"poll_interval_seconds":POLL_SECONDS,"stale_after_seconds":STALE_AFTER,"last_success_age_seconds":age,"data_fresh":fresh_enough,"ingestion_verified":bool(fresh_enough and state["polls_success"]>0),"poller":dict(state),"fusion":dict(adapter.metrics),"primary_sofascore":dict(adapter.primary_metrics),"evolution":evolution.status(),"research":{"running":state["research_running"],"last_research_at":state["last_research_at"]},"learning":{"running":state["learning_running"],"last_learning_at":state["last_learning_at"],"prediction_count":store.prediction_count(),"resolved_count":store.resolved_prediction_count(),"performance":store.performance_summary()},"generated_at":now}
 @app.get("/health")
 async def health(): t=telemetry_payload(); return {"ok":t["data_fresh"],**t}
 @app.get("/status")
@@ -94,13 +95,22 @@ async def research_status(): return research.research_report()
 @app.post("/research/run")
 async def research_run(): return research.research_report()
 @app.post("/predictions")
-async def record_prediction(item:PredictionIn): store.add_prediction(prediction_id=item.prediction_id,fixture_id=item.fixture_id,market=item.market,predicted_probability=item.predicted_probability,selection=item.selection,odds=item.odds,model_version=item.model_version,features=item.features); return {"ok":True,"prediction_id":item.prediction_id}
+async def record_prediction(item:PredictionIn):
+    store.add_prediction(prediction_id=item.prediction_id,fixture_id=item.fixture_id,market=item.market,predicted_probability=item.predicted_probability,selection=item.selection,odds=item.odds,model_version=item.model_version,features=item.features)
+    return {"ok":True,"prediction_id":item.prediction_id}
+@app.post("/predictions/batch")
+async def record_prediction_batch(item:PredictionBatchIn):
+    for p in item.predictions:
+        store.add_prediction(prediction_id=p.prediction_id,fixture_id=p.fixture_id,market=p.market,predicted_probability=p.predicted_probability,selection=p.selection,odds=p.odds,model_version=p.model_version,features=p.features)
+    return {"ok":True,"recorded":len(item.predictions),"prediction_ids":[p.prediction_id for p in item.predictions]}
 @app.post("/predictions/{prediction_id}/outcome")
 async def record_outcome(prediction_id:str,item:OutcomeIn): store.record_outcome(prediction_id,item.outcome); return {"ok":True,"prediction_id":prediction_id,"outcome":item.outcome}
 @app.get("/learning")
-async def learning_status(): return {"agent":"Closed-Loop Learning Core","interval_seconds":LEARNING_SECONDS,"running":state["learning_running"],"last_learning_at":state["last_learning_at"],"prediction_count":store.prediction_count(),"resolved_count":store.resolved_prediction_count(),"evolution":evolution.status()}
+async def learning_status(): return {"agent":"Closed-Loop Learning Core","interval_seconds":LEARNING_SECONDS,"running":state["learning_running"],"last_learning_at":state["last_learning_at"],"prediction_count":store.prediction_count(),"resolved_count":store.resolved_prediction_count(),"performance":store.performance_summary(),"evolution":evolution.status()}
 @app.post("/learning/run")
 async def learning_run(): return learning.run(reason="manual")
+@app.get("/learning/performance")
+async def learning_performance(): return store.performance_summary()
 @app.get("/live")
 async def live(): return {"count":len(store.current()),"items":store.current(),"source":state["active_source"] or adapter.active_source}
 @app.get("/fixture/{event_id}")
