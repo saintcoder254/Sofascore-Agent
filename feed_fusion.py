@@ -5,22 +5,24 @@ import time
 import httpx
 
 from sofascore_adapter import SofaScoreAdapter
+from fotmob_adapter import FotMobAdapter
 
 logger = logging.getLogger("emm.fusion")
 
 
 class FeedFusionAdapter:
-    """Primary SofaScore acquisition with an independent ESPN fallback.
+    """Multi-source football acquisition with ordered failover.
 
-    The fallback is deliberately source-labelled so downstream UMIOS can
-    distinguish primary and fallback observations instead of treating them as
-    interchangeable facts.
+    Priority: SofaScore -> ESPN -> FotMob. Every returned payload is tagged
+    with its source and priority so downstream UMIOS can apply source-aware
+    confidence and reconciliation rather than treating feeds as identical.
     """
 
     ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard"
 
     def __init__(self, sofascore_base, timeout=15):
         self.primary = SofaScoreAdapter(sofascore_base, timeout)
+        self.fotmob = FotMobAdapter(timeout)
         self.timeout = timeout
         self.fallback_client = httpx.AsyncClient(
             timeout=timeout,
@@ -35,9 +37,12 @@ class FeedFusionAdapter:
             "primary_attempts": 0,
             "primary_success": 0,
             "primary_failures": 0,
-            "fallback_attempts": 0,
-            "fallback_success": 0,
-            "fallback_failures": 0,
+            "espn_attempts": 0,
+            "espn_success": 0,
+            "espn_failures": 0,
+            "fotmob_attempts": 0,
+            "fotmob_success": 0,
+            "fotmob_failures": 0,
             "last_source": None,
             "last_error": None,
             "last_success_at": None,
@@ -93,32 +98,43 @@ class FeedFusionAdapter:
             "events": events,
         }
 
-    async def _fallback_today(self):
-        self.metrics["fallback_attempts"] += 1
+    async def _fallback_espn(self):
+        self.metrics["espn_attempts"] += 1
         day = self._date().replace("-", "")
         try:
-            response = await self.fallback_client.get(
-                self.ESPN_BASE,
-                params={"dates": day},
-            )
+            response = await self.fallback_client.get(self.ESPN_BASE, params={"dates": day})
             response.raise_for_status()
-            payload = response.json()
-            normalized = self._normalize_espn(payload)
-            self.metrics["fallback_success"] += 1
+            normalized = self._normalize_espn(response.json())
+            if not normalized["events"]:
+                raise RuntimeError("ESPN returned no match events")
+            self.metrics["espn_success"] += 1
             self.metrics["last_source"] = "espn"
             self.metrics["last_success_at"] = time.time()
             self.metrics["last_error"] = None
             self.active_source = "espn"
-            logger.warning(
-                "FUSION_FALLBACK_SUCCESS source=espn events=%s date=%s",
-                len(normalized["events"]), self._date(),
-            )
+            logger.warning("FUSION_FALLBACK_SUCCESS source=espn events=%s date=%s", len(normalized["events"]), self._date())
             return normalized
         except Exception as exc:
-            self.metrics["fallback_failures"] += 1
-            self.last_fallback_error = repr(exc)
+            self.metrics["espn_failures"] += 1
             self.metrics["last_error"] = repr(exc)
             logger.error("FUSION_FALLBACK_ERROR source=espn error=%r", exc)
+            raise
+
+    async def _fallback_fotmob(self):
+        self.metrics["fotmob_attempts"] += 1
+        try:
+            normalized = await self.fotmob.today_events()
+            self.metrics["fotmob_success"] += 1
+            self.metrics["last_source"] = "fotmob"
+            self.metrics["last_success_at"] = time.time()
+            self.metrics["last_error"] = None
+            self.active_source = "fotmob"
+            logger.warning("FUSION_FALLBACK_SUCCESS source=fotmob events=%s date=%s", len(normalized["events"]), self._date())
+            return normalized
+        except Exception as exc:
+            self.metrics["fotmob_failures"] += 1
+            self.metrics["last_error"] = repr(exc)
+            logger.error("FUSION_FALLBACK_ERROR source=fotmob error=%r", exc)
             raise
 
     async def today_events(self):
@@ -135,15 +151,26 @@ class FeedFusionAdapter:
             self.active_source = "sofascore"
             logger.info("FUSION_PRIMARY_SUCCESS source=sofascore events=%s", len(payload.get("events", [])))
             return payload
-        except Exception as exc:
+        except Exception as primary_exc:
             self.metrics["primary_failures"] += 1
-            self.metrics["last_error"] = repr(exc)
-            logger.warning("FUSION_PRIMARY_FAILED source=sofascore error=%r; trying fallback", exc)
-            return await self._fallback_today()
+            self.metrics["last_error"] = repr(primary_exc)
+            logger.warning("FUSION_PRIMARY_FAILED source=sofascore error=%r; trying espn", primary_exc)
+
+        try:
+            return await self._fallback_espn()
+        except Exception as espn_exc:
+            logger.warning("FUSION_SECONDARY_FAILED source=espn error=%r; trying fotmob", espn_exc)
+            try:
+                return await self._fallback_fotmob()
+            except Exception as fotmob_exc:
+                self.last_fallback_error = repr(fotmob_exc)
+                logger.error("FUSION_ALL_SOURCES_FAILED sofascore=%r espn=%r fotmob=%r", primary_exc, espn_exc, fotmob_exc)
+                raise RuntimeError("All football acquisition sources failed") from fotmob_exc
 
     def payload_hash(self, payload):
         return self.primary.payload_hash(payload)
 
     async def close(self):
         await self.primary.close()
+        await self.fotmob.close()
         await self.fallback_client.aclose()
