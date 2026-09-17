@@ -1,9 +1,11 @@
-import asyncio, os, time, logging, traceback
+import asyncio, os, time, logging, traceback, uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 from sofascore_adapter import SofaScoreAdapter
 from integrity import FreshnessGate, ConflictGate
 from store import Store
+from evolution import EvolutionAgent
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("emm.poller")
@@ -13,18 +15,38 @@ STALE_AFTER = int(os.getenv("STALE_AFTER_SECONDS", "180"))
 BASE = os.getenv("SOFASCORE_BASE", "https://www.sofascore.com/api/v1")
 DB = os.getenv("DATABASE_PATH", "matchmaster.db")
 TIMEOUT = float(os.getenv("HTTP_TIMEOUT_SECONDS", "15"))
+EVOLUTION_SECONDS = int(os.getenv("EVOLUTION_SECONDS", "21600"))
+EVOLUTION_MIN_SAMPLES = int(os.getenv("EVOLUTION_MIN_SAMPLES", "100"))
 
 adapter = SofaScoreAdapter(BASE, TIMEOUT)
 store = Store(DB)
 fresh = FreshnessGate(STALE_AFTER)
 conflict = ConflictGate()
+evolution = EvolutionAgent(store, EVOLUTION_MIN_SAMPLES)
 state = {
     "last_poll": None, "last_success": None, "last_error": None,
     "last_poll_duration_ms": None, "last_poll_items": 0,
     "polls_total": 0, "polls_success": 0, "polls_failed": 0,
     "consecutive_failures": 0, "next_poll_at": None,
     "items": 0, "running": False,
+    "evolution_running": False, "last_evolution_at": None,
 }
+
+
+class PredictionIn(BaseModel):
+    prediction_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    fixture_id: str
+    market: str
+    predicted_probability: float = Field(ge=0, le=1)
+    selection: str | None = None
+    odds: float | None = Field(default=None, gt=1)
+    model_version: str = "unknown"
+    features: dict = Field(default_factory=dict)
+
+
+class OutcomeIn(BaseModel):
+    outcome: float = Field(ge=0, le=1)
+
 
 async def poll_once():
     started = time.perf_counter()
@@ -74,6 +96,7 @@ async def poll_once():
         logger.debug(traceback.format_exc())
         raise
 
+
 async def polling_loop():
     state["running"] = True
     backoff = POLL_SECONDS
@@ -90,15 +113,38 @@ async def polling_loop():
             logger.warning("POLL_BACKOFF next_in_seconds=%s", backoff)
         await asyncio.sleep(backoff)
 
+
+async def evolution_loop():
+    state["evolution_running"] = True
+    logger.info("EVOLUTION_LOOP_STARTED interval_seconds=%s min_samples=%s", EVOLUTION_SECONDS, EVOLUTION_MIN_SAMPLES)
+    while True:
+        try:
+            result = evolution.run_cycle(reason="scheduled")
+            state["last_evolution_at"] = result["created_at"]
+            logger.info(
+                "EVOLUTION_CYCLE status=%s samples=%s candidates=%s",
+                result["status"], result["baseline"]["samples"], len(result["candidates"])
+            )
+        except Exception as exc:
+            logger.error("EVOLUTION_CYCLE_FAILED error=%r", exc)
+        await asyncio.sleep(EVOLUTION_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app):
-    task = asyncio.create_task(polling_loop())
+    poll_task = asyncio.create_task(polling_loop())
+    evolution_task = asyncio.create_task(evolution_loop())
     yield
-    task.cancel()
+    poll_task.cancel()
+    evolution_task.cancel()
     state["running"] = False
+    state["evolution_running"] = False
+    await asyncio.gather(poll_task, evolution_task, return_exceptions=True)
     await adapter.close()
 
+
 app = FastAPI(title="Elite MatchMaster SofaScore Acquisition Agent", lifespan=lifespan)
+
 
 def telemetry_payload():
     now = time.time()
@@ -116,26 +162,66 @@ def telemetry_payload():
         "ingestion_verified": bool(fresh_enough and state["polls_success"] > 0 and adapter.metrics["requests_success"] > 0),
         "poller": dict(state),
         "http": dict(adapter.metrics),
+        "evolution": evolution.status(),
         "generated_at": now,
     }
+
 
 @app.get("/health")
 async def health():
     t = telemetry_payload()
     return {"ok": t["data_fresh"], **t}
 
+
 @app.get("/status")
 async def status():
     return telemetry_payload()
+
 
 @app.get("/telemetry")
 async def telemetry():
     return telemetry_payload()
 
+
+@app.get("/evolution")
+async def evolution_status():
+    return evolution.status()
+
+
+@app.post("/evolution/run")
+async def evolution_run():
+    try:
+        return evolution.run_cycle(reason="manual")
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.post("/predictions")
+async def record_prediction(item: PredictionIn):
+    store.add_prediction(
+        prediction_id=item.prediction_id,
+        fixture_id=item.fixture_id,
+        market=item.market,
+        predicted_probability=item.predicted_probability,
+        selection=item.selection,
+        odds=item.odds,
+        model_version=item.model_version,
+        features=item.features,
+    )
+    return {"ok": True, "prediction_id": item.prediction_id}
+
+
+@app.post("/predictions/{prediction_id}/outcome")
+async def record_outcome(prediction_id: str, item: OutcomeIn):
+    store.record_outcome(prediction_id, item.outcome)
+    return {"ok": True, "prediction_id": prediction_id, "outcome": item.outcome}
+
+
 @app.get("/live")
 async def live():
     rows = store.current()
     return {"count": len(rows), "items": rows}
+
 
 @app.get("/fixture/{event_id}")
 async def fixture(event_id: str):
@@ -147,12 +233,14 @@ async def fixture(event_id: str):
             "integrity": {"status": status, "age_seconds": age, "reason": reason},
             "data": row}
 
+
 @app.get("/events/today")
 async def events_today():
     try:
         return await adapter.today_events()
     except Exception as exc:
         raise HTTPException(502, str(exc))
+
 
 @app.post("/poll")
 async def manual_poll():
@@ -161,6 +249,7 @@ async def manual_poll():
         return {"ok": True, "items": count, "retrieved_at": time.time(), "telemetry": telemetry_payload()}
     except Exception as exc:
         raise HTTPException(502, str(exc))
+
 
 @app.get("/fusion/feed")
 async def fusion_feed():
