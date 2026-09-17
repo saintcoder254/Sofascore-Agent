@@ -44,7 +44,7 @@ class SofaScoreAdapter:
 
     async def close(self):
         # curl_cffi AsyncSession uses close(), not aclose()
-        self.client.close()
+        await self.client.close()
 
     async def get_json(self, path):
         started = time.perf_counter()
