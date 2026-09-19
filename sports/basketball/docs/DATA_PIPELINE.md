@@ -3,7 +3,9 @@
 ## Acquisition boundary
 Basketball data is isolated under `sports/basketball/`. The existing football acquisition stack is not modified to pretend it is basketball-aware.
 
-## Data layers
+Sofascore is currently the primary acquisition source because it exposes basketball fixtures, results, standings, statistics and player/team information across many competitions. The repository retains raw source payloads for reconstruction and audit. citeturn0search0turn0search3
+
+## Operational layers
 1. Fixture layer — scheduled events, status, teams, competition, tipoff.
 2. Result layer — final scores and overtime state.
 3. Event layer — incidents and state transitions.
@@ -32,3 +34,6 @@ Every row should contain:
 - final verified result
 
 The raw source payload is retained separately so derived features can be reconstructed and audited.
+
+## Source policy
+Sofascore observations are not automatically treated as ground truth. Final results should be independently verified before they enter the training target table. Secondary sources remain disabled until their schemas and reliability are validated.
