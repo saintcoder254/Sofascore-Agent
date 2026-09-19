@@ -1,0 +1,13 @@
+version: "basketball-titan-1.0"
+monte_carlo:
+  simulations: 10000
+calibration:
+  minimum_samples: 250
+  shrinkage_strength: 50
+abstention:
+  min_data_quality: 0.70
+  min_edge: 0.035
+  max_uncertainty_width: 0.18
+market:
+  remove_vig: true
+  track_open_close: true

@@ -1,0 +1,23 @@
+training:
+  split: chronological
+  train_fraction: 0.70
+  validation_fraction: 0.15
+  test_fraction: 0.15
+  minimum_games_before_calibration: 250
+  embargo_games: 0
+
+metrics:
+  primary:
+    - brier
+    - log_loss
+    - mae_total
+    - closing_line_mae
+  secondary:
+    - calibration_error
+    - closing_line_value
+
+guardrails:
+  no_future_features: true
+  no_post_tip_data: true
+  require_out_of_sample_validation: true
+  retire_model_on_calibration_failure: true

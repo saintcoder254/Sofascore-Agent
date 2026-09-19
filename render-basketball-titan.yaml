@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: elite-matchmaster-basketball-titan
+    runtime: python
+    region: oregon
+    plan: free
+    branch: feature/basketball-titan-brain
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn sports.basketball.api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: THE_ODDS_API_KEY
+        sync: false
+      - key: BASKETBALL_ODDS_REGIONS
+        value: us
+      - key: BASKETBALL_MARKET_INTERVAL_SECONDS
+        value: "60"
+      - key: BASKETBALL_DATA_INTERVAL_SECONDS
+        value: "60"
+      - key: BASKETBALL_PRIMARY_SOURCE
+        value: sofascore
+      - key: BASKETBALL_VERIFY_SOURCE
+        value: espn
+      - key: BASKETBALL_RESULT_INTERVAL_SECONDS
+        value: "300"
