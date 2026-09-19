@@ -1,0 +1,26 @@
+market:
+  capture:
+    opening: true
+    intraday: true
+    closing: true
+    minimum_interval_seconds: 60
+  markets:
+    - moneyline
+    - spread
+    - total
+    - team_total
+    - first_half_total
+    - first_half_spread
+  evaluation:
+    track_closing_line_value: true
+    remove_vig_before_comparison: true
+    exclude_stale_quotes: true
+
+model_selection:
+  minimum_samples: 250
+  weighting:
+    brier: 0.45
+    log_loss: 0.35
+    calibration_gap: 0.20
+  require_out_of_sample: true
+  never_promote_on_in_sample_only: true
