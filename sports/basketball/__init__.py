@@ -8,6 +8,12 @@ from .shot_model import ShotOutcomeModel, ShotProfile, PossessionOutcome
 from .rotation import RotationPlayer, RotationSummary, summarize_rotation
 from .features import TeamFeatures, DataFreshness, normalize_rate
 from .adversarial import StressCase, StressResult, stress_test
+from .data_adapter import BasketballDataAdapter
+from .collector import BasketballCollector
+from .store import BasketballStore
+from .feature_builder import RollingTeamFeatures, build_rolling_features
+from .arbiter import BasketballArbiter, ModelSignal, ArbiterResult
+from .training import TrainingRow, TrainingMetrics, evaluate, chronological_split
 
 __all__ = [
     "BasketballEngine", "GameContext", "Projection", "TeamProfile",
@@ -18,4 +24,8 @@ __all__ = [
     "RotationPlayer", "RotationSummary", "summarize_rotation",
     "TeamFeatures", "DataFreshness", "normalize_rate",
     "StressCase", "StressResult", "stress_test",
+    "BasketballDataAdapter", "BasketballCollector", "BasketballStore",
+    "RollingTeamFeatures", "build_rolling_features",
+    "BasketballArbiter", "ModelSignal", "ArbiterResult",
+    "TrainingRow", "TrainingMetrics", "evaluate", "chronological_split",
 ]
