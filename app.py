@@ -112,8 +112,8 @@ async def enrichment_loop():
                     arb=arbiter.decide(event,bundle,gate,prediction)
                     if arb.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
                         sel=prediction["selection"]
-                        stable=hashlib.sha256((str(eid)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-Poisson-MC-v2").encode()).hexdigest()
-                        store.add_prediction(prediction_id=stable,fixture_id=eid,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-Poisson-MC-v2",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
+                        stable=hashlib.sha256((str(eid)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-MarketSpecific-v3").encode()).hexdigest()
+                        store.add_prediction(prediction_id=stable,fixture_id=eid,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-MarketSpecific-v3",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
                         passes+=1; state["arbiter_passes"]=state.get("arbiter_passes",0)+1; state["last_auto_analyze_at"]=time.time()
                     elif prediction.get("state")=="QUALIFIED_PREDICTION":
                         blocks+=1; state["arbiter_blocks"]=state.get("arbiter_blocks",0)+1
@@ -189,8 +189,8 @@ async def analyze_fixture(event_id:str):
     arbiter_decision=arbiter.decide(event,bundle,gate,prediction)
     if arbiter_decision.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
         sel=prediction["selection"]
-        stable=hashlib.sha256((str(event_id)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-Poisson-MC-v2").encode()).hexdigest()
-        store.add_prediction(prediction_id=stable,fixture_id=event_id,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-Poisson-MC-v2",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
+        stable=hashlib.sha256((str(event_id)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-MarketSpecific-v3").encode()).hexdigest()
+        store.add_prediction(prediction_id=stable,fixture_id=event_id,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-MarketSpecific-v3",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
     return {"engine":"Elite MatchMaster UMIOS TITAN","fixture_id":event_id,"qualification":gate,"analysis":analysis,"prediction":prediction,"arbiter":arbiter_decision,"evidence":bundle if gate["state"]=="QUALIFIED" else {"event":bundle.get("event"),"odds":bundle.get("odds"),"verification":bundle.get("verification"),"retrieved_at":bundle.get("retrieved_at")},"prediction_status":arbiter_decision.get("state","NO_BET"),"generated_at":time.time()}
 
 @app.get("/live")
