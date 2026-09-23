@@ -77,8 +77,10 @@ class UMIOSConsensusLayer:
         if p is None:return {"state":"NO_BET","reason":"missing_model_probability"}
         calibration=UMIOSCalibrationLayer(self.store).calibrate(float(p))
         cp=calibration["probability"]
+        challenger=self.challenger_signal(event,prediction)
         # Challenger is informational: it can flag disagreement, but cannot manufacture a bet.
-        return {"state":"PASS","raw_probability":p,"calibrated_probability":cp,"calibration":calibration}
+        if cp<0.55:return {"state":"NO_BET","reason":"calibrated_probability_below_threshold","raw_probability":p,"calibrated_probability":cp,"calibration":calibration,"challenger":challenger}
+        return {"state":"PASS","raw_probability":p,"calibrated_probability":cp,"calibration":calibration,"challenger":challenger}
 
 class UMIOSFinalArbiter:
     """Final deterministic decision gate for a candidate prediction."""
