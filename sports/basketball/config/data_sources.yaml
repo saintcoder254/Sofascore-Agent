@@ -1,0 +1,29 @@
+basketball:
+  primary:
+    - name: sofascore
+      role: fixtures_results_live_stats_lineups_shotmap
+      enabled: true
+      preserve_raw_payload: true
+
+  secondary:
+    - name: espn
+      role: independent_scores_stats
+      enabled: false
+    - name: nba_official
+      role: official_nba_data
+      enabled: false
+    - name: wnba_official
+      role: official_wnba_data
+      enabled: false
+
+  truth_policy:
+    results_require_independent_verification: true
+    stale_after_minutes: 15
+    lineup_stale_after_minutes: 30
+    odds_stale_after_minutes: 5
+    raw_payload_retention: true
+
+  training_policy:
+    exclude_post_tip_features: true
+    chronological_splits_only: true
+    closing_line_recording: true
