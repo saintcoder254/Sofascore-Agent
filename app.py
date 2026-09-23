@@ -80,49 +80,46 @@ async def verification_loop():
         except Exception as exc:logger.error("VERIFICATION_LEARNING_FAILED error=%r",exc)
         await asyncio.sleep(VERIFICATION_SECONDS)
 async def enrichment_loop():
-    """Continuously enrich a bounded set of today's fixtures for downstream analysis."""
+    """Continuously enrich bounded fixtures and route qualified candidates through the final arbiter."""
     state["enrichment_running"]=True
     while True:
         try:
             data=await adapter.today_events()
             events=data.get("events",[])
-            now=time.time()
-            candidates=[]
+            now=time.time(); candidates=[]
             for event in events:
                 eid=str(event.get("id",""))
                 if not eid: continue
                 raw_date=event.get("startTimestamp") or event.get("timestamp") or event.get("date")
                 try:
-                    ts=float(raw_date)
-                    if ts>1e12: ts/=1000
-                except (TypeError,ValueError):
-                    ts=None
+                    ts=float(raw_date); ts=ts/1000 if ts>1e12 else ts
+                except (TypeError,ValueError): ts=None
                 if ts is not None and ts < now-7200: continue
                 candidates.append((abs((ts or now)-now),eid))
             candidates=sorted(candidates)[:ENRICH_MAX_FIXTURES]
-            enriched=0
+            enriched=0; passes=0; blocks=0
             for _,eid in candidates:
                 try:
                     bundle=await acquisition.acquire(eid)
                     event=bundle.get("event") or {}
-                    if event:
-                        store.put(eid,bundle.get("retrieved_at",time.time()),adapter.payload_hash(event),event)
-                        enriched+=1
-                        if AUTO_ANALYZE and state.get("auto_analyze_items",0) < AUTO_ANALYZE_MAX:
-                            gate=qualifier.qualify(eid,bundle)
-                            if gate.get("state")=="QUALIFIED":
-                                prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
-    arbiter_decision=arbiter.decide(event,bundle,gate,prediction)
-                                arb=arbiter.decide(event,bundle,gate,prediction)\n                                if arb.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
-                                    sel=prediction["selection"]
-                                    stable=hashlib.sha256((str(eid)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-Poisson-MC-v2").encode()).hexdigest()
-                                    store.add_prediction(prediction_id=stable,fixture_id=eid,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-Poisson-MC-v2",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
-                                    state["auto_analyze_items"]=state.get("auto_analyze_items",0)+1\n                                    state["arbiter_passes"]=state.get("arbiter_passes",0)+1
-                                    state["last_auto_analyze_at"]=time.time()
+                    if not event: continue
+                    store.put(eid,bundle.get("retrieved_at",time.time()),adapter.payload_hash(event),event)
+                    enriched+=1
+                    if not AUTO_ANALYZE: continue
+                    gate=qualifier.qualify(eid,bundle)
+                    if gate.get("state")!="QUALIFIED": continue
+                    prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
+                    arb=arbiter.decide(event,bundle,gate,prediction)
+                    if arb.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
+                        sel=prediction["selection"]
+                        stable=hashlib.sha256((str(eid)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-Poisson-MC-v2").encode()).hexdigest()
+                        store.add_prediction(prediction_id=stable,fixture_id=eid,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-Poisson-MC-v2",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
+                        passes+=1; state["arbiter_passes"]=state.get("arbiter_passes",0)+1; state["last_auto_analyze_at"]=time.time()
+                    elif prediction.get("state")=="QUALIFIED_PREDICTION":
+                        blocks+=1; state["arbiter_blocks"]=state.get("arbiter_blocks",0)+1
                 except Exception as exc:
                     logger.warning("ENRICH_FAILED event=%s error=%r",eid,exc)
-            state["enrichment_items"]=enriched
-            state["last_enrichment_at"]=time.time()
+            state["enrichment_items"]=enriched; state["auto_analyze_items"]=passes; state["last_enrichment_at"]=time.time()
         except Exception as exc:
             logger.error("ENRICHMENT_LOOP_FAILED error=%r",exc)
         await asyncio.sleep(ENRICH_SECONDS)
@@ -183,39 +180,18 @@ async def scores24_status():return {"source":"scores24","url":adapter.scores24.U
 async def analyze_fixture(event_id:str):
     bundle=await acquisition.acquire(event_id)
     event=bundle.get("event") or {}
-    row=store.get_current(event_id)
-    if row is None and event:
-        try:
-            store.put(event_id,time.time(),adapter.payload_hash(event),event)
-        except Exception as exc:
-            logger.warning("ANALYSIS_CACHE_WRITE_FAILED event=%s error=%r",event_id,exc)
+    if event and store.get_current(event_id) is None:
+        try: store.put(event_id,time.time(),adapter.payload_hash(event),event)
+        except Exception as exc: logger.warning("ANALYSIS_CACHE_WRITE_FAILED event=%s error=%r",event_id,exc)
     gate=qualifier.qualify(event_id,bundle)
     analysis=core.analyze(event_id,bundle,gate)
     prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
+    arbiter_decision=arbiter.decide(event,bundle,gate,prediction)
     if arbiter_decision.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
         sel=prediction["selection"]
-        store.add_prediction(
-            prediction_id=str(uuid.uuid4()),fixture_id=event_id,market=sel["market"],
-            predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],
-            model_version="UMIOS-TITAN-Poisson-MC-v2",
-            features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"simulations":prediction["simulations"]}
-        )
-    return {
-        "engine":"Elite MatchMaster UMIOS TITAN",
-        "fixture_id":event_id,
-        "qualification":gate,
-        "analysis":analysis,
-        "prediction":prediction,
-        "evidence":bundle if gate["state"]=="QUALIFIED" else {
-            "event":bundle.get("event"),
-            "odds":bundle.get("odds"),
-            "verification":bundle.get("verification"),
-            "retrieved_at":bundle.get("retrieved_at")
-        },
-        "prediction_status":arbiter_decision.get("state","NO_BET"),
-        "arbiter":arbiter_decision,
-        "generated_at":time.time()
-    }
+        stable=hashlib.sha256((str(event_id)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-Poisson-MC-v2").encode()).hexdigest()
+        store.add_prediction(prediction_id=stable,fixture_id=event_id,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-Poisson-MC-v2",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
+    return {"engine":"Elite MatchMaster UMIOS TITAN","fixture_id":event_id,"qualification":gate,"analysis":analysis,"prediction":prediction,"arbiter":arbiter_decision,"evidence":bundle if gate["state"]=="QUALIFIED" else {"event":bundle.get("event"),"odds":bundle.get("odds"),"verification":bundle.get("verification"),"retrieved_at":bundle.get("retrieved_at")},"prediction_status":arbiter_decision.get("state","NO_BET"),"generated_at":time.time()}
 
 @app.get("/live")
 async def live():return {"count":len(store.current()),"items":store.current(),"source":state["active_source"] or adapter.active_source}
