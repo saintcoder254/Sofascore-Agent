@@ -1,4 +1,5 @@
 import math, time
+from umios_specialists import UMIOSSpecialistEnsemble
 
 class UMIOSAdversarialLayer:
     """Challenges candidate predictions before final persistence."""
@@ -83,13 +84,16 @@ class UMIOSFinalArbiter:
     """Final deterministic decision gate for a candidate prediction."""
     def __init__(self,store):
         self.adversarial=UMIOSAdversarialLayer()
+        self.specialists=UMIOSSpecialistEnsemble()
         self.consensus=UMIOSConsensusLayer(store)
 
     def decide(self,event,evidence,gate,prediction):
         if prediction.get("state")!="QUALIFIED_PREDICTION":
             return {"state":"NO_BET","reason":"probability_engine_rejected","prediction":prediction}
+        specialist=self.specialists.evaluate(event,evidence,prediction)
         challenge=self.adversarial.evaluate(prediction,evidence,gate)
         consensus=self.consensus.evaluate(event,prediction)
+        if specialist["volatility"].get("regime")=="HIGH": challenge["warnings"].append("HIGH_VOLATILITY_REGIME")
         if challenge["state"]!="PASS" or consensus["state"]!="PASS":
-            return {"state":"NO_BET","reason":"arbiter_blocked","challenge":challenge,"consensus":consensus,"prediction":prediction}
-        return {"state":"FINAL_QUALIFIED","challenge":challenge,"consensus":consensus,"prediction":prediction}
+            return {"state":"NO_BET","reason":"arbiter_blocked","challenge":challenge,"consensus":consensus,"specialists":specialist,"prediction":prediction}
+        return {"state":"FINAL_QUALIFIED","challenge":challenge,"consensus":consensus,"specialists":specialist,"prediction":prediction}
