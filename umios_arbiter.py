@@ -95,6 +95,13 @@ class UMIOSFinalArbiter:
         specialist=self.specialists.evaluate(event,evidence,prediction)
         challenge=self.adversarial.evaluate(prediction,evidence,gate)
         consensus=self.consensus.evaluate(event,prediction)
+        sel=prediction.get("selection") or {}
+        market=str(sel.get("market") or "")
+        coverage=(specialist.get("market_coverage") or {})
+        # Specialist market engines are evidence-gated: corners/cards cannot pass on a
+        # generic goal model when the corresponding evidence is unavailable.
+        if market=="CORNERS" and not coverage.get("corners"): challenge["blockers"].append("CORNERS_EVIDENCE_MISSING")
+        if market=="CARDS" and not coverage.get("cards"): challenge["blockers"].append("CARDS_EVIDENCE_MISSING")
         if specialist["volatility"].get("regime")=="HIGH": challenge["warnings"].append("HIGH_VOLATILITY_REGIME")
         if challenge["state"]!="PASS" or consensus["state"]!="PASS":
             return {"state":"NO_BET","reason":"arbiter_blocked","challenge":challenge,"consensus":consensus,"specialists":specialist,"prediction":prediction}
