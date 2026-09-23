@@ -40,7 +40,7 @@ class Projection:
     data_quality: float
 
 class BasketballEngine:
-    VERSION = "basketball-titan-1.1"
+    VERSION = "basketball-titan-1.2-risk-gated"
 
     @staticmethod
     def _blend(a: float, b: float, wa: float = 0.5) -> float:
