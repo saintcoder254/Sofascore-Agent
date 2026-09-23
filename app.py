@@ -12,11 +12,15 @@ from source_learning import SourceLearningAgent
 from odds_intelligence import OddsIntelligenceAgent
 from result_verifier import ResultVerifierAgent
 from verification_learning import VerificationLearningAgent
+from match_acquisition import MatchAcquisitionEngine
+from umios_qualifier import UMIOSQualifier
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger=logging.getLogger("emm.poller")
 POLL_SECONDS=int(os.getenv("POLL_SECONDS","60")); STALE_AFTER=int(os.getenv("STALE_AFTER_SECONDS","180")); BASE=os.getenv("SOFASCORE_BASE","https://www.sofascore.com/api/v1"); DB=os.getenv("DATABASE_PATH","matchmaster.db"); TIMEOUT=float(os.getenv("HTTP_TIMEOUT_SECONDS","15")); EVOLUTION_SECONDS=int(os.getenv("EVOLUTION_SECONDS","21600")); EVOLUTION_MIN_SAMPLES=int(os.getenv("EVOLUTION_MIN_SAMPLES","100")); RESEARCH_SECONDS=int(os.getenv("RESEARCH_SECONDS","21600")); LEARNING_SECONDS=int(os.getenv("LEARNING_SECONDS","300")); SOURCE_LEARNING_SECONDS=int(os.getenv("SOURCE_LEARNING_SECONDS","300")); SOURCE_MIN_SAMPLES=int(os.getenv("SOURCE_MIN_SAMPLES","100")); VERIFICATION_SECONDS=int(os.getenv("VERIFICATION_SECONDS","300")); VERIFICATION_MIN_SOURCES=int(os.getenv("VERIFICATION_MIN_SOURCES","2"))
 adapter=FeedFusionAdapter(BASE,TIMEOUT); store=Store(DB); fresh=FreshnessGate(STALE_AFTER); conflict=ConflictGate(); evolution=EvolutionAgent(store,EVOLUTION_MIN_SAMPLES); research=ResearchEngine(store); learning=ClosedLoopLearning(store,evolution); source_learning=SourceLearningAgent(store,SOURCE_MIN_SAMPLES); odds=OddsIntelligenceAgent(store); verifier=ResultVerifierAgent(); verification_learning=VerificationLearningAgent(store,verifier,VERIFICATION_MIN_SOURCES)
+acquisition=MatchAcquisitionEngine(adapter)
+qualifier=UMIOSQualifier(STALE_AFTER)
 state={"last_poll":None,"last_success":None,"last_error":None,"last_poll_duration_ms":None,"last_poll_items":0,"polls_total":0,"polls_success":0,"polls_failed":0,"consecutive_failures":0,"next_poll_at":None,"items":0,"running":False,"evolution_running":False,"last_evolution_at":None,"research_running":False,"last_research_at":None,"learning_running":False,"last_learning_at":None,"source_learning_running":False,"last_source_learning_at":None,"verification_learning_running":False,"last_verification_learning_at":None,"active_source":None}
 class PredictionIn(BaseModel):
     prediction_id:str=Field(default_factory=lambda:str(uuid.uuid4())); fixture_id:str; market:str; predicted_probability:float=Field(ge=0,le=1); selection:str|None=None; odds:float|None=Field(default=None,gt=1); model_version:str="unknown"; features:dict=Field(default_factory=dict)
@@ -122,6 +126,33 @@ async def learning_verify_run():return verification_learning.run()
 async def odds_status():return odds.status()
 @app.get("/sources/scores24")
 async def scores24_status():return {"source":"scores24","url":adapter.scores24.URL,"methodology":adapter.scores24.METHODOLOGY,"metrics":adapter.scores24.metrics,"stored":store.external_summary("scores24")}
+@app.get("/analyze/fixture/{event_id}")
+async def analyze_fixture(event_id:str):
+    bundle=await acquisition.acquire(event_id)
+    event=bundle.get("event") or {}
+    row=store.get_current(event_id)
+    if row is None and event:
+        try:
+            store.put(event_id,time.time(),adapter.payload_hash(event),event)
+        except Exception as exc:
+            logger.warning("ANALYSIS_CACHE_WRITE_FAILED event=%s error=%r",event_id,exc)
+    gate=qualifier.qualify(event_id,bundle)
+    # UMIOS receives the entire evidence bundle only after the integrity gate.
+    # A downstream model must not treat a blocked bundle as prediction-ready.
+    return {
+        "engine":"Elite MatchMaster UMIOS TITAN",
+        "fixture_id":event_id,
+        "qualification":gate,
+        "evidence":bundle if gate["state"]=="QUALIFIED" else {
+            "event":bundle.get("event"),
+            "odds":bundle.get("odds"),
+            "verification":bundle.get("verification"),
+            "retrieved_at":bundle.get("retrieved_at")
+        },
+        "prediction_status":"READY_FOR_CORE_MODEL" if gate["state"]=="QUALIFIED" else "NO_BET",
+        "generated_at":time.time()
+    }
+
 @app.get("/live")
 async def live():return {"count":len(store.current()),"items":store.current(),"source":state["active_source"] or adapter.active_source}
 @app.get("/fixture/{event_id}")
