@@ -59,7 +59,17 @@ class UMIOSMarketModels:
         if market=="DOUBLE_CHANCE": return s.replace(" ","")
         if market=="DNB": return "1" if s in {"1","HOME"} else "2" if s in {"2","AWAY"} else None
         if market=="CORRECT_SCORE": return s.replace(" ","")
-        if market in {"TOTAL_GOALS","CORNERS","CARDS","HANDICAP"}: return s
+        if market in {"CORNERS","CARDS"}: return s
+        if market=="HANDICAP":
+            m=re.search(r"(HOME|AWAY|1|2)\\s*([+-]?\\d+(?:\\.5)?)",s)
+            if not m:return s
+            side="HOME" if m.group(1) in {"HOME","1"} else "AWAY"
+            line=float(m.group(2))
+            if line.is_integer(): line=int(line)
+            return f"{side} {line:+g}"
+        if market=="TOTAL_GOALS":
+            m=re.search(r"(OVER|UNDER)\\s*([0-9]+(?:\\.[05])?)",s)
+            return f"{m.group(1)} {float(m.group(2))}" if m else s
         return s
 
     @classmethod
