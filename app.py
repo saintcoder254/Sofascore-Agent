@@ -1,4 +1,4 @@
-import asyncio, os, time, logging, uuid
+import asyncio, os, time, logging, uuid, hashlib
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -19,13 +19,13 @@ from umios_probability import UMIOSProbabilityEngine
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger=logging.getLogger("emm.poller")
-POLL_SECONDS=int(os.getenv("POLL_SECONDS","60")); STALE_AFTER=int(os.getenv("STALE_AFTER_SECONDS","180")); BASE=os.getenv("SOFASCORE_BASE","https://www.sofascore.com/api/v1"); DB=os.getenv("DATABASE_PATH","matchmaster.db"); TIMEOUT=float(os.getenv("HTTP_TIMEOUT_SECONDS","15")); EVOLUTION_SECONDS=int(os.getenv("EVOLUTION_SECONDS","21600")); EVOLUTION_MIN_SAMPLES=int(os.getenv("EVOLUTION_MIN_SAMPLES","100")); RESEARCH_SECONDS=int(os.getenv("RESEARCH_SECONDS","21600")); LEARNING_SECONDS=int(os.getenv("LEARNING_SECONDS","300")); SOURCE_LEARNING_SECONDS=int(os.getenv("SOURCE_LEARNING_SECONDS","300")); SOURCE_MIN_SAMPLES=int(os.getenv("SOURCE_MIN_SAMPLES","100")); VERIFICATION_SECONDS=int(os.getenv("VERIFICATION_SECONDS","300")); VERIFICATION_MIN_SOURCES=int(os.getenv("VERIFICATION_MIN_SOURCES","2")); ENRICH_SECONDS=int(os.getenv("ENRICH_SECONDS","300")); ENRICH_MAX_FIXTURES=int(os.getenv("ENRICH_MAX_FIXTURES","8"))
+POLL_SECONDS=int(os.getenv("POLL_SECONDS","60")); STALE_AFTER=int(os.getenv("STALE_AFTER_SECONDS","180")); BASE=os.getenv("SOFASCORE_BASE","https://www.sofascore.com/api/v1"); DB=os.getenv("DATABASE_PATH","matchmaster.db"); TIMEOUT=float(os.getenv("HTTP_TIMEOUT_SECONDS","15")); EVOLUTION_SECONDS=int(os.getenv("EVOLUTION_SECONDS","21600")); EVOLUTION_MIN_SAMPLES=int(os.getenv("EVOLUTION_MIN_SAMPLES","100")); RESEARCH_SECONDS=int(os.getenv("RESEARCH_SECONDS","21600")); LEARNING_SECONDS=int(os.getenv("LEARNING_SECONDS","300")); SOURCE_LEARNING_SECONDS=int(os.getenv("SOURCE_LEARNING_SECONDS","300")); SOURCE_MIN_SAMPLES=int(os.getenv("SOURCE_MIN_SAMPLES","100")); VERIFICATION_SECONDS=int(os.getenv("VERIFICATION_SECONDS","300")); VERIFICATION_MIN_SOURCES=int(os.getenv("VERIFICATION_MIN_SOURCES","2")); ENRICH_SECONDS=int(os.getenv("ENRICH_SECONDS","300")); ENRICH_MAX_FIXTURES=int(os.getenv("ENRICH_MAX_FIXTURES","8")); AUTO_ANALYZE=os.getenv("AUTO_ANALYZE","1")=="1"; AUTO_ANALYZE_MAX=int(os.getenv("AUTO_ANALYZE_MAX","8"))
 adapter=FeedFusionAdapter(BASE,TIMEOUT); store=Store(DB); fresh=FreshnessGate(STALE_AFTER); conflict=ConflictGate(); evolution=EvolutionAgent(store,EVOLUTION_MIN_SAMPLES); research=ResearchEngine(store); learning=ClosedLoopLearning(store,evolution); source_learning=SourceLearningAgent(store,SOURCE_MIN_SAMPLES); odds=OddsIntelligenceAgent(store); verifier=ResultVerifierAgent(); verification_learning=VerificationLearningAgent(store,verifier,VERIFICATION_MIN_SOURCES)
 acquisition=MatchAcquisitionEngine(adapter)
 qualifier=UMIOSQualifier(STALE_AFTER)
 core=UMIOSCoreEngine(odds)
 probability=UMIOSProbabilityEngine()
-state={"last_poll":None,"last_success":None,"last_error":None,"last_poll_duration_ms":None,"last_poll_items":0,"polls_total":0,"polls_success":0,"polls_failed":0,"consecutive_failures":0,"next_poll_at":None,"items":0,"running":False,"evolution_running":False,"last_evolution_at":None,"research_running":False,"last_research_at":None,"learning_running":False,"last_learning_at":None,"source_learning_running":False,"last_source_learning_at":None,"verification_learning_running":False,"last_verification_learning_at":None,"enrichment_running":False,"last_enrichment_at":None,"enrichment_items":0,"active_source":None}
+state={"last_poll":None,"last_success":None,"last_error":None,"last_poll_duration_ms":None,"last_poll_items":0,"polls_total":0,"polls_success":0,"polls_failed":0,"consecutive_failures":0,"next_poll_at":None,"items":0,"running":False,"evolution_running":False,"last_evolution_at":None,"research_running":False,"last_research_at":None,"learning_running":False,"last_learning_at":None,"source_learning_running":False,"last_source_learning_at":None,"verification_learning_running":False,"last_verification_learning_at":None,"enrichment_running":False,"last_enrichment_at":None,"enrichment_items":0,"auto_analyze_items":0,"last_auto_analyze_at":None,"active_source":None}
 class PredictionIn(BaseModel):
     prediction_id:str=Field(default_factory=lambda:str(uuid.uuid4())); fixture_id:str; market:str; predicted_probability:float=Field(ge=0,le=1); selection:str|None=None; odds:float|None=Field(default=None,gt=1); model_version:str="unknown"; features:dict=Field(default_factory=dict)
 class PredictionBatchIn(BaseModel): predictions:list[PredictionIn]=Field(min_length=1,max_length=500)
@@ -101,11 +101,21 @@ async def enrichment_loop():
             enriched=0
             for _,eid in candidates:
                 try:
-                    bundle=await acquisition.enrich_event(eid)
+                    bundle=await acquisition.acquire(eid)
                     event=bundle.get("event") or {}
                     if event:
                         store.put(eid,bundle.get("retrieved_at",time.time()),adapter.payload_hash(event),event)
                         enriched+=1
+                        if AUTO_ANALYZE and state.get("auto_analyze_items",0) < AUTO_ANALYZE_MAX:
+                            gate=qualifier.qualify(eid,bundle)
+                            if gate.get("state")=="QUALIFIED":
+                                prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
+                                if prediction.get("state")=="QUALIFIED_PREDICTION" and prediction.get("selection"):
+                                    sel=prediction["selection"]
+                                    stable=hashlib.sha256((str(eid)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-Poisson-MC-v2").encode()).hexdigest()
+                                    store.add_prediction(prediction_id=stable,fixture_id=eid,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-Poisson-MC-v2",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
+                                    state["auto_analyze_items"]=state.get("auto_analyze_items",0)+1
+                                    state["last_auto_analyze_at"]=time.time()
                 except Exception as exc:
                     logger.warning("ENRICH_FAILED event=%s error=%r",eid,exc)
             state["enrichment_items"]=enriched
@@ -121,7 +131,7 @@ async def lifespan(app):
 app=FastAPI(title="Elite MatchMaster Feed Fusion Acquisition Agent",lifespan=lifespan)
 def telemetry_payload():
     now=time.time();age=None if state["last_success"] is None else round(now-state["last_success"],1);fresh_enough=state["last_success"] is not None and age<=STALE_AFTER
-    return {"service":"feed-fusion-acquisition-agent","source":state["active_source"] or adapter.active_source,"running":state["running"],"poll_interval_seconds":POLL_SECONDS,"stale_after_seconds":STALE_AFTER,"last_success_age_seconds":age,"data_fresh":fresh_enough,"poller":dict(state),"fusion":dict(adapter.metrics),"scores24":dict(adapter.scores24.metrics),"evolution":evolution.status(),"learning":{"running":state["learning_running"],"prediction_count":store.prediction_count(),"resolved_count":store.resolved_prediction_count(),"performance":store.performance_summary()},"source_learning":{"running":state["source_learning_running"],"min_samples":SOURCE_MIN_SAMPLES,"scores":source_learning.status()},"verification_learning":{"running":state["verification_learning_running"],"min_sources":VERIFICATION_MIN_SOURCES,"last_run_at":state["last_verification_learning_at"]},"enrichment":{"running":state["enrichment_running"],"interval_seconds":ENRICH_SECONDS,"max_fixtures":ENRICH_MAX_FIXTURES,"last_run_at":state["last_enrichment_at"],"items":state["enrichment_items"]},"odds_intelligence":odds.status(),"generated_at":now}
+    return {"service":"feed-fusion-acquisition-agent","source":state["active_source"] or adapter.active_source,"running":state["running"],"poll_interval_seconds":POLL_SECONDS,"stale_after_seconds":STALE_AFTER,"last_success_age_seconds":age,"data_fresh":fresh_enough,"poller":dict(state),"fusion":dict(adapter.metrics),"scores24":dict(adapter.scores24.metrics),"evolution":evolution.status(),"learning":{"running":state["learning_running"],"prediction_count":store.prediction_count(),"resolved_count":store.resolved_prediction_count(),"performance":store.performance_summary()},"source_learning":{"running":state["source_learning_running"],"min_samples":SOURCE_MIN_SAMPLES,"scores":source_learning.status()},"verification_learning":{"running":state["verification_learning_running"],"min_sources":VERIFICATION_MIN_SOURCES,"last_run_at":state["last_verification_learning_at"]},"enrichment":{"running":state["enrichment_running"],"interval_seconds":ENRICH_SECONDS,"max_fixtures":ENRICH_MAX_FIXTURES,"last_run_at":state["last_enrichment_at"],"items":state["enrichment_items"],"auto_analyze":AUTO_ANALYZE,"auto_analyze_items":state.get("auto_analyze_items",0),"last_auto_analyze_at":state.get("last_auto_analyze_at")},"odds_intelligence":odds.status(),"generated_at":now}
 @app.get("/health")
 async def health():t=telemetry_payload();return {"ok":t["data_fresh"],**t}
 @app.get("/status")
@@ -184,7 +194,7 @@ async def analyze_fixture(event_id:str):
         store.add_prediction(
             prediction_id=str(uuid.uuid4()),fixture_id=event_id,market=sel["market"],
             predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],
-            model_version="UMIOS-TITAN-Poisson-MC-v1",
+            model_version="UMIOS-TITAN-Poisson-MC-v2",
             features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"simulations":prediction["simulations"]}
         )
     return {
