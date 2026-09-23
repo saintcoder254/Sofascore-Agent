@@ -68,7 +68,7 @@ class UMIOSMarketModels:
             if line.is_integer(): line=int(line)
             return f"{side} {line:+g}"
         if market=="TOTAL_GOALS":
-            m=re.search(r"(OVER|UNDER)\\s*([0-9]+(?:\\.[05])?)",s)
+            m=re.search(r"(OVER|UNDER)\s*([0-9]+(?:\.[05])?)",s)
             return f"{m.group(1)} {float(m.group(2))}" if m else s
         return s
 
