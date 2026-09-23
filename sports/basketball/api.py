@@ -6,6 +6,7 @@ import os
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from .analysis_memory import BasketballAnalysisMemoryGate
 from .historical_memory import BasketballHistoricalMemory
 from .market_service import BasketballMarketService
 from .market_store import BasketballMarketStore
@@ -27,6 +28,7 @@ historical_memory = BasketballHistoricalMemory(
     os.getenv("BASKETBALL_MEMORY_DB", os.getenv("BASKETBALL_MARKET_DB", "basketball_titan.db")),
     os.getenv("BASKETBALL_HISTORICAL_DATASET", "data/basketball/pregame.jsonl"),
 )
+analysis_memory_gate = BasketballAnalysisMemoryGate(historical_memory)
 _tasks: list[asyncio.Task] = []
 
 
@@ -40,6 +42,13 @@ class HistoricalContextRequest(BaseModel):
     raw_limit: int = 250
     market_limit: int = 500
     verified_limit: int = 250
+
+
+
+class AnalysisMemoryRequest(HistoricalContextRequest):
+    """Memory gate request used by downstream basketball analysis."""
+
+    pass
 
 
 @app.on_event("startup")
@@ -83,5 +92,16 @@ async def collect_markets():
 
 @app.post("/memory/context")
 async def memory_context(request: HistoricalContextRequest):
-    context = historical_memory.build_context(**request.model_dump())
-    return context.as_dict()
+    bundle = analysis_memory_gate.query(**request.model_dump())
+    return bundle.as_dict()
+
+
+@app.post("/analysis/memory")
+async def analysis_memory(request: AnalysisMemoryRequest):
+    """Mandatory historical-memory query boundary for downstream analysis.
+
+    Call this boundary before feature engineering/modeling. The returned context
+    is cutoff-safe and explicitly marks that the memory query was performed.
+    """
+    bundle = analysis_memory_gate.query(**request.model_dump())
+    return bundle.as_dict()
