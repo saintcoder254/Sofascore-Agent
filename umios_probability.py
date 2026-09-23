@@ -112,7 +112,7 @@ class UMIOSProbabilityEngine:
     @staticmethod
     def _selection(name,market):
         s=str(name or "").strip().upper()
-        s=re.sub(r"\\s+"," ",s)
+        s=re.sub(r"\s+"," ",s)
         if market=="1X2":
             if s in {"1","HOME","HOME WIN"}:return "1"
             if s in {"X","DRAW"}:return "X"
@@ -125,7 +125,7 @@ class UMIOSProbabilityEngine:
         if market=="DNB" and s in {"1","HOME","2","AWAY"}:return "1" if s in {"1","HOME"} else "2"
         if market=="CORRECT_SCORE":return s.replace(" ","")
         if market=="TOTAL_GOALS":
-            m=re.search(r"(OVER|UNDER)\\s*(\\d+(?:\\.\\d+)?)",s)
+            m=re.search(r"(OVER|UNDER)\s*(\d+(?:\.\d+)?)",s)
             return f"{m.group(1)} {float(m.group(2))}" if m else s
         return s
 
