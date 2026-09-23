@@ -123,7 +123,7 @@ class UMIOSMarketModels:
         return counts
 
     @classmethod
-    def _stat_values(cls,evidence,keys):
+    def _historical_values(cls,evidence,keys):
         vals=[]
         def walk(x):
             if isinstance(x,dict):
@@ -133,7 +133,7 @@ class UMIOSMarketModels:
                     elif isinstance(v,(dict,list)): walk(v)
             elif isinstance(x,list):
                 for v in x: walk(v)
-        walk(evidence.get("statistics") or {})
+        walk(evidence.get("history") or {})
         return vals
 
     @classmethod
@@ -153,14 +153,21 @@ class UMIOSMarketModels:
             "DNB":{"1":one/(1-draw),"2":two/(1-draw)} if draw<1 else {},
             "CORRECT_SCORE":{f"{h}-{a}":p for (h,a),p in sorted(grid.items(),key=lambda kv:kv[1],reverse=True)[:10]}
         }
+
+        # Asian handicap probabilities are derived from the score distribution and only used when a matching bookmaker line exists.
+        probs["HANDICAP"]={}
+        for line in range(-3,4):
+            if line==0: continue
+            probs["HANDICAP"][f"HOME {line:+d}"]=sum(p for (h,a),p in grid.items() if h+line>a)
+            probs["HANDICAP"][f"AWAY {-line:+d}"]=sum(p for (h,a),p in grid.items() if a-line>h)
         for line in (.5,1.5,2.5,3.5,4.5,5.5):
             probs.setdefault("TOTAL_GOALS",{})[f"OVER {line}"]=sum(p for (h,a),p in grid.items() if h+a>line)
             probs["TOTAL_GOALS"][f"UNDER {line}"]=sum(p for (h,a),p in grid.items() if h+a<line)
 
         # Corners: use only explicitly corner-like statistic values. If there is no
         # identifiable corner evidence, do not synthesize a corner probability.
-        corner_vals=self._stat_values(evidence,("corner","corners"))
-        card_vals=self._incident_counts(evidence)
+        corner_vals=self._historical_values(evidence,("corner","corners"))
+        card_vals=self._historical_values(evidence,("yellow","card","booking"))
         market_meta={}
         if len(corner_vals)>=2:
             mean=sum(corner_vals)/len(corner_vals); var=statistics.pvariance(corner_vals) if len(corner_vals)>1 else mean
