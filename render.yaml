@@ -32,3 +32,5 @@ services:
         value: "300"
       - key: ENRICH_MAX_FIXTURES
         value: "8"
+      - key: MONTE_CARLO_SAMPLES
+        value: "10000"
