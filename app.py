@@ -18,12 +18,12 @@ from umios_core import UMIOSCoreEngine
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger=logging.getLogger("emm.poller")
-POLL_SECONDS=int(os.getenv("POLL_SECONDS","60")); STALE_AFTER=int(os.getenv("STALE_AFTER_SECONDS","180")); BASE=os.getenv("SOFASCORE_BASE","https://www.sofascore.com/api/v1"); DB=os.getenv("DATABASE_PATH","matchmaster.db"); TIMEOUT=float(os.getenv("HTTP_TIMEOUT_SECONDS","15")); EVOLUTION_SECONDS=int(os.getenv("EVOLUTION_SECONDS","21600")); EVOLUTION_MIN_SAMPLES=int(os.getenv("EVOLUTION_MIN_SAMPLES","100")); RESEARCH_SECONDS=int(os.getenv("RESEARCH_SECONDS","21600")); LEARNING_SECONDS=int(os.getenv("LEARNING_SECONDS","300")); SOURCE_LEARNING_SECONDS=int(os.getenv("SOURCE_LEARNING_SECONDS","300")); SOURCE_MIN_SAMPLES=int(os.getenv("SOURCE_MIN_SAMPLES","100")); VERIFICATION_SECONDS=int(os.getenv("VERIFICATION_SECONDS","300")); VERIFICATION_MIN_SOURCES=int(os.getenv("VERIFICATION_MIN_SOURCES","2"))
+POLL_SECONDS=int(os.getenv("POLL_SECONDS","60")); STALE_AFTER=int(os.getenv("STALE_AFTER_SECONDS","180")); BASE=os.getenv("SOFASCORE_BASE","https://www.sofascore.com/api/v1"); DB=os.getenv("DATABASE_PATH","matchmaster.db"); TIMEOUT=float(os.getenv("HTTP_TIMEOUT_SECONDS","15")); EVOLUTION_SECONDS=int(os.getenv("EVOLUTION_SECONDS","21600")); EVOLUTION_MIN_SAMPLES=int(os.getenv("EVOLUTION_MIN_SAMPLES","100")); RESEARCH_SECONDS=int(os.getenv("RESEARCH_SECONDS","21600")); LEARNING_SECONDS=int(os.getenv("LEARNING_SECONDS","300")); SOURCE_LEARNING_SECONDS=int(os.getenv("SOURCE_LEARNING_SECONDS","300")); SOURCE_MIN_SAMPLES=int(os.getenv("SOURCE_MIN_SAMPLES","100")); VERIFICATION_SECONDS=int(os.getenv("VERIFICATION_SECONDS","300")); VERIFICATION_MIN_SOURCES=int(os.getenv("VERIFICATION_MIN_SOURCES","2")); ENRICH_SECONDS=int(os.getenv("ENRICH_SECONDS","300")); ENRICH_MAX_FIXTURES=int(os.getenv("ENRICH_MAX_FIXTURES","8"))
 adapter=FeedFusionAdapter(BASE,TIMEOUT); store=Store(DB); fresh=FreshnessGate(STALE_AFTER); conflict=ConflictGate(); evolution=EvolutionAgent(store,EVOLUTION_MIN_SAMPLES); research=ResearchEngine(store); learning=ClosedLoopLearning(store,evolution); source_learning=SourceLearningAgent(store,SOURCE_MIN_SAMPLES); odds=OddsIntelligenceAgent(store); verifier=ResultVerifierAgent(); verification_learning=VerificationLearningAgent(store,verifier,VERIFICATION_MIN_SOURCES)
 acquisition=MatchAcquisitionEngine(adapter)
 qualifier=UMIOSQualifier(STALE_AFTER)
 core=UMIOSCoreEngine(odds)
-state={"last_poll":None,"last_success":None,"last_error":None,"last_poll_duration_ms":None,"last_poll_items":0,"polls_total":0,"polls_success":0,"polls_failed":0,"consecutive_failures":0,"next_poll_at":None,"items":0,"running":False,"evolution_running":False,"last_evolution_at":None,"research_running":False,"last_research_at":None,"learning_running":False,"last_learning_at":None,"source_learning_running":False,"last_source_learning_at":None,"verification_learning_running":False,"last_verification_learning_at":None,"active_source":None}
+state={"last_poll":None,"last_success":None,"last_error":None,"last_poll_duration_ms":None,"last_poll_items":0,"polls_total":0,"polls_success":0,"polls_failed":0,"consecutive_failures":0,"next_poll_at":None,"items":0,"running":False,"evolution_running":False,"last_evolution_at":None,"research_running":False,"last_research_at":None,"learning_running":False,"last_learning_at":None,"source_learning_running":False,"last_source_learning_at":None,"verification_learning_running":False,"last_verification_learning_at":None,"enrichment_running":False,"last_enrichment_at":None,"enrichment_items":0,"active_source":None}
 class PredictionIn(BaseModel):
     prediction_id:str=Field(default_factory=lambda:str(uuid.uuid4())); fixture_id:str; market:str; predicted_probability:float=Field(ge=0,le=1); selection:str|None=None; odds:float|None=Field(default=None,gt=1); model_version:str="unknown"; features:dict=Field(default_factory=dict)
 class PredictionBatchIn(BaseModel): predictions:list[PredictionIn]=Field(min_length=1,max_length=500)
@@ -75,9 +75,45 @@ async def verification_loop():
         try:r=verification_learning.run();state["last_verification_learning_at"]=time.time();logger.info("VERIFICATION_LEARNING resolved=%s external=%s blocked=%s unresolved=%s",r["resolved"],r.get("external_resolved",0),r["blocked_conflicts"],r["unresolved"])
         except Exception as exc:logger.error("VERIFICATION_LEARNING_FAILED error=%r",exc)
         await asyncio.sleep(VERIFICATION_SECONDS)
+async def enrichment_loop():
+    """Continuously enrich a bounded set of today's fixtures for downstream analysis."""
+    state["enrichment_running"]=True
+    while True:
+        try:
+            data=await adapter.today_events()
+            events=data.get("events",[])
+            now=time.time()
+            candidates=[]
+            for event in events:
+                eid=str(event.get("id",""))
+                if not eid: continue
+                raw_date=event.get("startTimestamp") or event.get("timestamp") or event.get("date")
+                try:
+                    ts=float(raw_date)
+                    if ts>1e12: ts/=1000
+                except (TypeError,ValueError):
+                    ts=None
+                if ts is not None and ts < now-7200: continue
+                candidates.append((abs((ts or now)-now),eid))
+            candidates=sorted(candidates)[:ENRICH_MAX_FIXTURES]
+            enriched=0
+            for _,eid in candidates:
+                try:
+                    bundle=await acquisition.enrich_event(eid)
+                    event=bundle.get("event") or {}
+                    if event:
+                        store.put(eid,bundle.get("retrieved_at",time.time()),adapter.payload_hash(event),event)
+                        enriched+=1
+                except Exception as exc:
+                    logger.warning("ENRICH_FAILED event=%s error=%r",eid,exc)
+            state["enrichment_items"]=enriched
+            state["last_enrichment_at"]=time.time()
+        except Exception as exc:
+            logger.error("ENRICHMENT_LOOP_FAILED error=%r",exc)
+        await asyncio.sleep(ENRICH_SECONDS)
 @asynccontextmanager
 async def lifespan(app):
-    tasks=[asyncio.create_task(x()) for x in (polling_loop,evolution_loop,research_loop,learning_loop,source_learning_loop,verification_loop)];yield
+    tasks=[asyncio.create_task(x()) for x in (polling_loop,evolution_loop,research_loop,learning_loop,source_learning_loop,verification_loop,enrichment_loop)];yield
     for t in tasks:t.cancel()
     await asyncio.gather(*tasks,return_exceptions=True);await adapter.close()
 app=FastAPI(title="Elite MatchMaster Feed Fusion Acquisition Agent",lifespan=lifespan)
