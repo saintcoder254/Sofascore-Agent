@@ -1,8 +1,11 @@
 import math, random, re, time
 from collections import defaultdict
+from umios_market_models import UMIOSMarketModels
 
 class UMIOSProbabilityEngine:
-    """Conservative independent probability engine: form-aware Poisson + Monte Carlo + market-value gates."""
+    """Conservative probability engine with market-specific models, Monte Carlo, form, and value gates."""
+    def __init__(self):
+        self.market_models=UMIOSMarketModels()
     MARKETS=("1X2","BTTS","TOTAL_GOALS","DOUBLE_CHANCE","DNB","CORRECT_SCORE")
     FINISHED={"post","final","finished","completed"}
 
@@ -172,7 +175,13 @@ class UMIOSProbabilityEngine:
         grid=self._grid(lh,la); mc=self._monte_carlo(lh,la,simulations,seed=f"{event.get('id','')}:{round(lh,4)}:{round(la,4)}")
         gp=self._market_probs(grid); mp=self._market_probs(mc)
         ensemble={m:{k:round(0.65*v+0.35*mp.get(m,{}).get(k,v),6) for k,v in items.items()} for m,items in gp.items()}
-        observed=self._observations(evidence); candidates=[]
+        market_specific=self.market_models.evaluate(event,evidence)
+        # Specialized models take precedence for the markets they can support.
+        specialized=market_specific.get("probabilities") or {}
+        ensemble={m:dict(v) for m,v in ensemble.items()}
+        for market,vals in specialized.items():
+            if vals: ensemble[market]=vals
+        observed=self.market_models.odds_observations(evidence); candidates=[]
         history_gate=sample>=5
         for row in observed:
             market=row["market"]; sel=row["selection"]; p=ensemble.get(market,{}).get(sel)
@@ -183,7 +192,7 @@ class UMIOSProbabilityEngine:
             status="QUALIFIED" if history_gate and not suspicious and edge>=0.04 and ev>=0.05 and p>=0.55 else "REJECTED"
             candidates.append({"market":market,"selection":sel,"odds":row["odds"],"model_probability":round(p,4),"market_probability":round(row["market_probability"],4),"edge":round(edge,4),"expected_value":round(ev,4),"status":status,"suspicious_edge":suspicious})
         qualified=sorted((x for x in candidates if x["status"]=="QUALIFIED"),key=lambda x:(x["edge"],x["expected_value"]),reverse=True)
-        return {"state":"QUALIFIED_PREDICTION" if qualified else "NO_BET","model":"Poisson+MonteCarlo+FormTrend","simulations":max(1000,int(simulations)),
+        return {"state":"QUALIFIED_PREDICTION" if qualified else "NO_BET","model":"UMIOS-MarketSpecific+Poisson+MonteCarlo+FormTrend","simulations":max(1000,int(simulations)),
                 "expected_goals":{"home":round(lh,3),"away":round(la,3)},"history":{"home_games":hh["games"],"away_games":aa["games"],"minimum_games":sample},
-                "form_trend":{"home":round(self._trend(hh),4),"away":round(self._trend(aa),4)},"probabilities":ensemble,
+                "form_trend":{"home":round(self._trend(hh),4),"away":round(self._trend(aa),4)},"probabilities":ensemble,"market_models":market_specific,
                 "market_observations":len(observed),"candidates":candidates,"selection":qualified[0] if qualified else None,"generated_at":time.time()}
