@@ -15,6 +15,7 @@ from verification_learning import VerificationLearningAgent
 from match_acquisition import MatchAcquisitionEngine
 from umios_qualifier import UMIOSQualifier
 from umios_core import UMIOSCoreEngine
+from umios_probability import UMIOSProbabilityEngine
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger=logging.getLogger("emm.poller")
@@ -23,6 +24,7 @@ adapter=FeedFusionAdapter(BASE,TIMEOUT); store=Store(DB); fresh=FreshnessGate(ST
 acquisition=MatchAcquisitionEngine(adapter)
 qualifier=UMIOSQualifier(STALE_AFTER)
 core=UMIOSCoreEngine(odds)
+probability=UMIOSProbabilityEngine()
 state={"last_poll":None,"last_success":None,"last_error":None,"last_poll_duration_ms":None,"last_poll_items":0,"polls_total":0,"polls_success":0,"polls_failed":0,"consecutive_failures":0,"next_poll_at":None,"items":0,"running":False,"evolution_running":False,"last_evolution_at":None,"research_running":False,"last_research_at":None,"learning_running":False,"last_learning_at":None,"source_learning_running":False,"last_source_learning_at":None,"verification_learning_running":False,"last_verification_learning_at":None,"enrichment_running":False,"last_enrichment_at":None,"enrichment_items":0,"active_source":None}
 class PredictionIn(BaseModel):
     prediction_id:str=Field(default_factory=lambda:str(uuid.uuid4())); fixture_id:str; market:str; predicted_probability:float=Field(ge=0,le=1); selection:str|None=None; odds:float|None=Field(default=None,gt=1); model_version:str="unknown"; features:dict=Field(default_factory=dict)
@@ -176,18 +178,28 @@ async def analyze_fixture(event_id:str):
             logger.warning("ANALYSIS_CACHE_WRITE_FAILED event=%s error=%r",event_id,exc)
     gate=qualifier.qualify(event_id,bundle)
     analysis=core.analyze(event_id,bundle,gate)
+    prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
+    if prediction.get("selection") and prediction.get("state")=="QUALIFIED_PREDICTION":
+        sel=prediction["selection"]
+        store.add_prediction(
+            prediction_id=str(uuid.uuid4()),fixture_id=event_id,market=sel["market"],
+            predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],
+            model_version="UMIOS-TITAN-Poisson-MC-v1",
+            features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"simulations":prediction["simulations"]}
+        )
     return {
         "engine":"Elite MatchMaster UMIOS TITAN",
         "fixture_id":event_id,
         "qualification":gate,
         "analysis":analysis,
+        "prediction":prediction,
         "evidence":bundle if gate["state"]=="QUALIFIED" else {
             "event":bundle.get("event"),
             "odds":bundle.get("odds"),
             "verification":bundle.get("verification"),
             "retrieved_at":bundle.get("retrieved_at")
         },
-        "prediction_status":"ANALYZED_BENCHMARK_ONLY" if analysis["state"]=="ANALYZED" else "NO_BET",
+        "prediction_status":prediction.get("state","NO_BET"),
         "generated_at":time.time()
     }
 
