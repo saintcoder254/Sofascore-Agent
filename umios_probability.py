@@ -6,7 +6,7 @@ class UMIOSProbabilityEngine:
     """Conservative probability engine with market-specific models, Monte Carlo, form, and value gates."""
     def __init__(self):
         self.market_models=UMIOSMarketModels()
-    MARKETS=("1X2","BTTS","TOTAL_GOALS","DOUBLE_CHANCE","DNB","CORRECT_SCORE")
+    MARKETS=("1X2","BTTS","TOTAL_GOALS","DOUBLE_CHANCE","DNB","CORRECT_SCORE","CORNERS","CARDS","HANDICAP")
     FINISHED={"post","final","finished","completed"}
 
     @staticmethod
