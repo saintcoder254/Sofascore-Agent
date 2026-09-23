@@ -32,5 +32,9 @@ services:
         value: "300"
       - key: ENRICH_MAX_FIXTURES
         value: "8"
+      - key: AUTO_ANALYZE
+        value: "1"
+      - key: AUTO_ANALYZE_MAX
+        value: "8"
       - key: MONTE_CARLO_SAMPLES
         value: "10000"
