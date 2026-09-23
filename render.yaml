@@ -28,3 +28,7 @@ services:
         value: "300"
       - key: VERIFICATION_SECONDS
         value: "300"
+      - key: ENRICH_SECONDS
+        value: "300"
+      - key: ENRICH_MAX_FIXTURES
+        value: "8"
