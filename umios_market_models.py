@@ -61,7 +61,7 @@ class UMIOSMarketModels:
         if market=="CORRECT_SCORE": return s.replace(" ","")
         if market in {"CORNERS","CARDS"}: return s
         if market=="HANDICAP":
-            m=re.search(r"(HOME|AWAY|1|2)\\s*([+-]?\\d+(?:\\.5)?)",s)
+            m=re.search(r"(HOME|AWAY|1|2)\s*([+-]?\d+(?:\.5)?)",s)
             if not m:return s
             side="HOME" if m.group(1) in {"HOME","1"} else "AWAY"
             line=float(m.group(2))
