@@ -105,7 +105,7 @@ async def enrichment_loop():
                     if not event: continue
                     store.put(eid,bundle.get("retrieved_at",time.time()),adapter.payload_hash(event),event)
                     enriched+=1
-                    if not AUTO_ANALYZE: continue
+                    if not AUTO_ANALYZE or passes >= AUTO_ANALYZE_MAX: continue
                     gate=qualifier.qualify(eid,bundle)
                     if gate.get("state")!="QUALIFIED": continue
                     prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
