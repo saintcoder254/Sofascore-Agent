@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from .analysis_memory import BasketballAnalysisMemoryGate
+from .analysis_service import BasketballAnalysisService
 from .historical_memory import BasketballHistoricalMemory
 from .market_service import BasketballMarketService
 from .market_store import BasketballMarketStore
@@ -29,6 +30,7 @@ historical_memory = BasketballHistoricalMemory(
     os.getenv("BASKETBALL_HISTORICAL_DATASET", "data/basketball/pregame.jsonl"),
 )
 analysis_memory_gate = BasketballAnalysisMemoryGate(historical_memory)
+analysis_service = BasketballAnalysisService(analysis_memory_gate)
 _tasks: list[asyncio.Task] = []
 
 
@@ -49,6 +51,12 @@ class AnalysisMemoryRequest(HistoricalContextRequest):
     """Memory gate request used by downstream basketball analysis."""
 
     pass
+
+
+class AnalysisRequest(HistoricalContextRequest):
+    market_total: float | None = None
+    market_spread_home: float | None = None
+    simulations: int = 10_000
 
 
 @app.on_event("startup")
@@ -105,3 +113,20 @@ async def analysis_memory(request: AnalysisMemoryRequest):
     """
     bundle = analysis_memory_gate.query(**request.model_dump())
     return bundle.as_dict()
+
+
+@app.post("/analysis")
+async def analyze(request: AnalysisRequest):
+    """Run the cutoff-safe historical-memory -> projection -> simulation path."""
+    result = analysis_service.analyze(**request.model_dump())
+    return {
+        "projection": result.projection,
+        "simulation": result.simulation,
+        "memory": result.memory,
+        "pipeline": [
+            "historical_memory_gate",
+            "historical_feature_extraction",
+            "basketball_projection",
+            "monte_carlo_simulation",
+        ],
+    }
