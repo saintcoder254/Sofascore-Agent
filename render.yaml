@@ -5,6 +5,10 @@ services:
     plan: starter
     healthCheckPath: /health
     autoDeploy: true
+    disk:
+      name: matchmaster-data
+      mountPath: /data
+      sizeGB: 10
     envVars:
       - key: POLL_SECONDS
         value: "60"
@@ -12,3 +16,15 @@ services:
         value: "180"
       - key: DATABASE_PATH
         value: "/data/matchmaster.db"
+      - key: HTTP_TIMEOUT_SECONDS
+        value: "15"
+      - key: EVOLUTION_SECONDS
+        value: "21600"
+      - key: RESEARCH_SECONDS
+        value: "21600"
+      - key: LEARNING_SECONDS
+        value: "300"
+      - key: SOURCE_LEARNING_SECONDS
+        value: "300"
+      - key: VERIFICATION_SECONDS
+        value: "300"
