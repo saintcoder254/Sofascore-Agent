@@ -49,3 +49,8 @@ pip install -r requirements.txt
 uvicorn app:app --host 0.0.0.0 --port 8000
 
 Default poll interval is 60 seconds. Override with POLL_SECONDS. Default stale threshold is 180 seconds (STALE_AFTER_SECONDS).
+
+## UMIOS TITAN core analysis
+The service now includes a bounded continuous enrichment loop for today's fixtures. It refreshes the nearest eligible fixtures every 300 seconds by default, collecting the canonical event, statistics, shotmap, incidents, lineups, and odds evidence. Configuration is controlled by ENRICH_SECONDS and ENRICH_MAX_FIXTURES.
+
+The /analyze/fixture/{event_id} endpoint passes a qualified evidence bundle into umios_core.py. The core normalizes numeric/statistical evidence, groups available odds into supported market families, de-vigs market-implied probabilities, and exposes a conservative candidate set. It deliberately labels these as BENCHMARK_ONLY until an independently trained probability model is connected; market odds are not treated as a model prediction.
