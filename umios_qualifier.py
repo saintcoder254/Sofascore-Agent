@@ -52,7 +52,8 @@ class UMIOSQualifier:
             if not isinstance(market, dict): continue
             for row in market.get("markets", []) or []:
                 for choice in row.get("choices", []) or []:
-                    p = self._prob_from_odds(choice.get("fractionalValue") or choice.get("decimalValue") or choice.get("odds"))
+                    raw = choice.get("decimalValue") if choice.get("decimalValue") is not None else choice.get("odds")
+                    p = self._prob_from_odds(raw)
                     if p is not None:
                         odds_count += 1
                         odds_values.append(p)
