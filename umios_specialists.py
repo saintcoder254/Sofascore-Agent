@@ -3,6 +3,7 @@ from collections import defaultdict
 
 class UMIOSSpecialistEnsemble:
     """Specialist evidence layer. Produces bounded feature adjustments; never overrides source truth."""
+    FINISHED={"post","final","finished","completed","ended","after_penalties","after_extra_time"}
     def __init__(self):
         self.version="UMIOS-SPECIALISTS-v1"
 
@@ -66,6 +67,8 @@ class UMIOSSpecialistEnsemble:
         def extract(events,side):
             vals=[]
             for e in events or []:
+                st=((e.get("status") or {}).get("type") or {})
+                if str(st.get("state") or "").lower() not in self.FINISHED and st.get("completed") is not True: continue
                 h=e.get("homeTeam") or {};a=e.get("awayTeam") or {}
                 hs=self._num((e.get("homeScore") or {}).get("current",h.get("score")))
                 aws=self._num((e.get("awayScore") or {}).get("current",a.get("score")))
@@ -82,6 +85,8 @@ class UMIOSSpecialistEnsemble:
         vals=[]
         for side in ("home","away"):
             for e in (history.get(side) or {}).get("events",[]):
+                st=((e.get("status") or {}).get("type") or {})
+                if str(st.get("state") or "").lower() not in self.FINISHED and st.get("completed") is not True: continue
                 h=e.get("homeScore") or {};a=e.get("awayScore") or {}
                 hs=self._num(h.get("current")); aw=self._num(a.get("current"))
                 if hs is not None and aw is not None:vals.append(hs+aw)
