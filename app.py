@@ -14,6 +14,7 @@ from result_verifier import ResultVerifierAgent
 from verification_learning import VerificationLearningAgent
 from match_acquisition import MatchAcquisitionEngine
 from umios_qualifier import UMIOSQualifier
+from umios_core import UMIOSCoreEngine
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger=logging.getLogger("emm.poller")
@@ -21,6 +22,7 @@ POLL_SECONDS=int(os.getenv("POLL_SECONDS","60")); STALE_AFTER=int(os.getenv("STA
 adapter=FeedFusionAdapter(BASE,TIMEOUT); store=Store(DB); fresh=FreshnessGate(STALE_AFTER); conflict=ConflictGate(); evolution=EvolutionAgent(store,EVOLUTION_MIN_SAMPLES); research=ResearchEngine(store); learning=ClosedLoopLearning(store,evolution); source_learning=SourceLearningAgent(store,SOURCE_MIN_SAMPLES); odds=OddsIntelligenceAgent(store); verifier=ResultVerifierAgent(); verification_learning=VerificationLearningAgent(store,verifier,VERIFICATION_MIN_SOURCES)
 acquisition=MatchAcquisitionEngine(adapter)
 qualifier=UMIOSQualifier(STALE_AFTER)
+core=UMIOSCoreEngine(odds)
 state={"last_poll":None,"last_success":None,"last_error":None,"last_poll_duration_ms":None,"last_poll_items":0,"polls_total":0,"polls_success":0,"polls_failed":0,"consecutive_failures":0,"next_poll_at":None,"items":0,"running":False,"evolution_running":False,"last_evolution_at":None,"research_running":False,"last_research_at":None,"learning_running":False,"last_learning_at":None,"source_learning_running":False,"last_source_learning_at":None,"verification_learning_running":False,"last_verification_learning_at":None,"active_source":None}
 class PredictionIn(BaseModel):
     prediction_id:str=Field(default_factory=lambda:str(uuid.uuid4())); fixture_id:str; market:str; predicted_probability:float=Field(ge=0,le=1); selection:str|None=None; odds:float|None=Field(default=None,gt=1); model_version:str="unknown"; features:dict=Field(default_factory=dict)
@@ -137,19 +139,19 @@ async def analyze_fixture(event_id:str):
         except Exception as exc:
             logger.warning("ANALYSIS_CACHE_WRITE_FAILED event=%s error=%r",event_id,exc)
     gate=qualifier.qualify(event_id,bundle)
-    # UMIOS receives the entire evidence bundle only after the integrity gate.
-    # A downstream model must not treat a blocked bundle as prediction-ready.
+    analysis=core.analyze(event_id,bundle,gate)
     return {
         "engine":"Elite MatchMaster UMIOS TITAN",
         "fixture_id":event_id,
         "qualification":gate,
+        "analysis":analysis,
         "evidence":bundle if gate["state"]=="QUALIFIED" else {
             "event":bundle.get("event"),
             "odds":bundle.get("odds"),
             "verification":bundle.get("verification"),
             "retrieved_at":bundle.get("retrieved_at")
         },
-        "prediction_status":"READY_FOR_CORE_MODEL" if gate["state"]=="QUALIFIED" else "NO_BET",
+        "prediction_status":"ANALYZED_BENCHMARK_ONLY" if analysis["state"]=="ANALYZED" else "NO_BET",
         "generated_at":time.time()
     }
 
