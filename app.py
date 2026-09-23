@@ -193,6 +193,68 @@ async def analyze_fixture(event_id:str):
         store.add_prediction(prediction_id=stable,fixture_id=event_id,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-MarketSpecific-v3",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
     return {"engine":"Elite MatchMaster UMIOS TITAN","fixture_id":event_id,"qualification":gate,"analysis":analysis,"prediction":prediction,"arbiter":arbiter_decision,"evidence":bundle if gate["state"]=="QUALIFIED" else {"event":bundle.get("event"),"odds":bundle.get("odds"),"verification":bundle.get("verification"),"retrieved_at":bundle.get("retrieved_at")},"prediction_status":arbiter_decision.get("state","NO_BET"),"generated_at":time.time()}
 
+class MatchGatewayIn(BaseModel):
+    home: str
+    away: str
+    event_id: str | None = None
+
+def _normalize_team_name(value: str) -> str:
+    import re
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+def _resolve_today_fixture(events, home: str, away: str):
+    target_home=_normalize_team_name(home)
+    target_away=_normalize_team_name(away)
+    exact=[]
+    partial=[]
+    for event in events or []:
+        eh=_normalize_team_name((event.get("homeTeam") or {}).get("name",""))
+        ea=_normalize_team_name((event.get("awayTeam") or {}).get("name",""))
+        if eh==target_home and ea==target_away:
+            exact.append(event)
+        elif ((target_home in eh or eh in target_home) and
+              (target_away in ea or ea in target_away)):
+            partial.append(event)
+    matches=exact or partial
+    if not matches:
+        return None
+    matches.sort(key=lambda e: float(e.get("startTimestamp") or e.get("timestamp") or 0))
+    return matches[0]
+
+async def _run_fixture_analysis(event_id: str):
+    bundle=await acquisition.acquire(event_id)
+    event=bundle.get("event") or {}
+    if event and store.get_current(event_id) is None:
+        try:
+            store.put(event_id,time.time(),adapter.payload_hash(event),event)
+        except Exception as exc:
+            logger.warning("ANALYSIS_CACHE_WRITE_FAILED event=%s error=%r",event_id,exc)
+    gate=qualifier.qualify(event_id,bundle)
+    analysis=core.analyze(event_id,bundle,gate)
+    prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
+    arbiter_decision=arbiter.decide(event,bundle,gate,prediction)
+    if arbiter_decision.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
+        sel=prediction["selection"]
+        stable=hashlib.sha256((str(event_id)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-MarketSpecific-v3").encode()).hexdigest()
+        store.add_prediction(prediction_id=stable,fixture_id=event_id,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-MarketSpecific-v3",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
+    return {"engine":"Elite MatchMaster UMIOS TITAN","fixture_id":event_id,"qualification":gate,"analysis":analysis,"prediction":prediction,"arbiter":arbiter_decision,"evidence":bundle if gate["state"]=="QUALIFIED" else {"event":bundle.get("event"),"odds":bundle.get("odds"),"verification":bundle.get("verification"),"retrieved_at":bundle.get("retrieved_at")},"prediction_status":arbiter_decision.get("state","NO_BET"),"generated_at":time.time()}
+
+@app.post("/analyze/match")
+async def analyze_match_gateway(item: MatchGatewayIn):
+    if not item.home.strip() or not item.away.strip():
+        raise HTTPException(400,"home and away are required")
+    if item.event_id:
+        return await _run_fixture_analysis(item.event_id)
+    data=await adapter.today_events()
+    event=_resolve_today_fixture(data.get("events",[]),item.home,item.away)
+    if not event:
+        raise HTTPException(404,f"Today's fixture not found: {item.home} vs {item.away}")
+    return await _run_fixture_analysis(str(event.get("id")))
+
+@app.get("/analyze/match")
+async def analyze_match_gateway_get(home: str, away: str, event_id: str | None = None):
+    return await analyze_match_gateway(MatchGatewayIn(home=home,away=away,event_id=event_id))
+
 @app.get("/live")
 async def live():return {"count":len(store.current()),"items":store.current(),"source":state["active_source"] or adapter.active_source}
 @app.get("/fixture/{event_id}")
