@@ -54,3 +54,18 @@ Default poll interval is 60 seconds. Override with POLL_SECONDS. Default stale t
 The service now includes a bounded continuous enrichment loop for today's fixtures. It refreshes the nearest eligible fixtures every 300 seconds by default, collecting the canonical event, statistics, shotmap, incidents, lineups, and odds evidence. Configuration is controlled by ENRICH_SECONDS and ENRICH_MAX_FIXTURES.
 
 The /analyze/fixture/{event_id} endpoint passes a qualified evidence bundle into umios_core.py. The core normalizes numeric/statistical evidence, groups available odds into supported market families, de-vigs market-implied probabilities, and exposes a conservative candidate set. It deliberately labels these as BENCHMARK_ONLY until an independently trained probability model is connected; market odds are not treated as a model prediction.
+
+
+## Market-specific probability layer
+
+UMIOS TITAN now uses `umios_market_models.py` as a specialist probability layer rather than treating every market as a generic goal model.
+
+- 1X2, double chance, DNB, BTTS, totals, and correct score are derived from an independent score-distribution model.
+- Corners are modeled only when identifiable corner statistics are present.
+- Cards are modeled only when identifiable card/booking incidents provide enough observations.
+- Each market carries its own evidence availability and confidence metadata.
+- The final arbiter blocks corners/cards when their required evidence is unavailable.
+- The existing Monte Carlo ensemble, form trend, odds de-vigging, edge/EV gates, calibration, and adversarial checks remain active.
+- Unsupported or evidence-thin markets remain `NO_BET`; the system does not manufacture probabilities.
+
+This architecture separates market generation from final qualification: a market must have both a model probability and sufficient evidence before it can become a persisted prediction.
