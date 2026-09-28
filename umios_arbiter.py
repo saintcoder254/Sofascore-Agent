@@ -1,5 +1,6 @@
 import math, time
 from umios_specialists import UMIOSSpecialistEnsemble
+from basketball_volatility_guard import BasketballVolatilityGuard
 
 class UMIOSAdversarialLayer:
     """Challenges candidate predictions before final persistence."""
@@ -88,6 +89,7 @@ class UMIOSFinalArbiter:
         self.adversarial=UMIOSAdversarialLayer()
         self.specialists=UMIOSSpecialistEnsemble()
         self.consensus=UMIOSConsensusLayer(store)
+        self.basketball_guard=BasketballVolatilityGuard()
 
     def decide(self,event,evidence,gate,prediction):
         if prediction.get("state")!="QUALIFIED_PREDICTION":
@@ -97,6 +99,18 @@ class UMIOSFinalArbiter:
         consensus=self.consensus.evaluate(event,prediction)
         sel=prediction.get("selection") or {}
         market=str(sel.get("market") or "")
+
+        # Basketball totals receive a dedicated volatility/tail-risk veto.
+        # This gate can only BLOCK a candidate; it never manufactures a pick.
+        basketball_risk=self.basketball_guard.evaluate(event,evidence,prediction)
+        if basketball_risk.state!="PASS":
+            challenge["blockers"].extend(
+                "BASKETBALL_RISK:"+b for b in basketball_risk.blockers
+            )
+        if basketball_risk.warnings:
+            challenge["warnings"].extend(
+                "BASKETBALL_RISK:"+w for w in basketball_risk.warnings
+            )
         coverage=(specialist.get("market_coverage") or {})
         # Specialist market engines are evidence-gated: corners/cards cannot pass on a
         # generic goal model when the corresponding evidence is unavailable.
