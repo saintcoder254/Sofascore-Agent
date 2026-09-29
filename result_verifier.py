@@ -31,6 +31,7 @@ class ResultVerifierAgent:
         if "double" in m: return "double_chance"
         if "draw no bet" in m or m == "dnb": return "dnb"
         if "handicap" in m: return "handicap"
+        if any(x in m for x in ("total points","total points ot","basketball total","points ou")): return "basketball_total"
         if any(x in m for x in ("over", "under", "total goals", "goals ou")): return "goals_ou"
         if "team goals" in m or "team total" in m: return "team_goals"
         if "clean sheet" in m: return "clean_sheet"
@@ -62,7 +63,7 @@ class ResultVerifierAgent:
             yes = h > 0 and a > 0
             if s in {"yes", "gg", "btts yes"}: return float(yes)
             if s in {"no", "ng", "btts no"}: return float(not yes)
-        if market == "goals_ou":
+        if market in {"goals_ou","basketball_total"}:
             line = cls.line(s)
             if line is None: return None
             if "over" in s or s.startswith("o"): return 1.0 if total > line else 0.0 if total < line else 0.5
