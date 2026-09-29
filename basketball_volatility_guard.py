@@ -115,7 +115,7 @@ class BasketballVolatilityGuard:
         # Some feeds omit sport metadata. A TOTAL_POINTS line above 50 is a
         # safe structural basketball signature and avoids silently skipping the guard.
         if market in cls.TOTAL_MARKETS:
-            m=re.search(r"(?:OVER|UNDER|O|U)\\s*([0-9]+(?:\\.[0-9]+)?)",raw)
+            m=re.search(r"(?:OVER|UNDER|O|U)\s*([0-9]+(?:\.[0-9]+)?)",raw)
             if m and float(m.group(1))>=50:return True
         return False
 
