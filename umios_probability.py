@@ -1,11 +1,15 @@
 import math, random, re, time
 from collections import defaultdict
 from umios_market_models import UMIOSMarketModels
+from basketball_probability_engine import BasketballProbabilityEngine
+from competition_regime_agent import CompetitionRegimeAgent
 
 class UMIOSProbabilityEngine:
     """Conservative probability engine with market-specific models, Monte Carlo, form, and value gates."""
     def __init__(self):
         self.market_models=UMIOSMarketModels()
+        self.basketball=BasketballProbabilityEngine()
+        self.regime=CompetitionRegimeAgent()
     MARKETS=("1X2","BTTS","TOTAL_GOALS","DOUBLE_CHANCE","DNB","CORRECT_SCORE","CORNERS","CARDS","HANDICAP")
     FINISHED={"post","final","finished","completed"}
 
@@ -160,6 +164,16 @@ class UMIOSProbabilityEngine:
         return max(-0.35,min(0.35,(rate["gf_last5"]-rate["gf_prev"])*0.12))
 
     def run(self,event,evidence,gate,simulations=10000):
+        sport=self.basketball._sport(event,evidence)
+        if sport=="basketball":
+            regime=self.regime.classify(event,evidence)
+            result=self.basketball.run(event,evidence,gate,simulations=simulations)
+            result["competition_regime"]=regime
+            if result.get("state")=="QUALIFIED_PREDICTION" and result.get("selection"):
+                sample=int((result.get("history") or {}).get("minimum_games") or 0)
+                if sample < int(regime.get("min_history",5)):
+                    result["state"]="NO_BET"; result["reason"]="competition_regime_history_gate"; result["selection"]=None
+            return result
         if gate.get("state")!="QUALIFIED":return {"state":"NO_BET","reason":"qualification_gate_blocked","candidates":[]}
         home=event.get("homeTeam") or {}; away=event.get("awayTeam") or {}
         hh=self._team_rates(home.get("id"),(evidence.get("history",{}).get("home") or {}).get("events",[]))
