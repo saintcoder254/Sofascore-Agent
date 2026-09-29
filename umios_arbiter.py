@@ -1,6 +1,7 @@
 import math, time
 from umios_specialists import UMIOSSpecialistEnsemble
 from basketball_volatility_guard import BasketballVolatilityGuard
+from market_arbiter import MarketArbiter
 
 class UMIOSAdversarialLayer:
     """Challenges candidate predictions before final persistence."""
@@ -90,6 +91,7 @@ class UMIOSFinalArbiter:
         self.specialists=UMIOSSpecialistEnsemble()
         self.consensus=UMIOSConsensusLayer(store)
         self.basketball_guard=BasketballVolatilityGuard()
+        self.market_arbiter=MarketArbiter()
 
     def decide(self,event,evidence,gate,prediction):
         if prediction.get("state")!="QUALIFIED_PREDICTION":
@@ -99,6 +101,7 @@ class UMIOSFinalArbiter:
         consensus=self.consensus.evaluate(event,prediction)
         sel=prediction.get("selection") or {}
         market=str(sel.get("market") or "")
+        market_decision=self.market_arbiter.evaluate(prediction,evidence)
 
         # Basketball totals receive a dedicated volatility/tail-risk veto.
         # This gate can only BLOCK a candidate; it never manufactures a pick.
@@ -117,6 +120,9 @@ class UMIOSFinalArbiter:
         if market=="CORNERS" and not coverage.get("corners"): challenge["blockers"].append("CORNERS_EVIDENCE_MISSING")
         if market=="CARDS" and not coverage.get("cards"): challenge["blockers"].append("CARDS_EVIDENCE_MISSING")
         if specialist["volatility"].get("regime")=="HIGH": challenge["warnings"].append("HIGH_VOLATILITY_REGIME")
+        if market_decision["state"]!="PASS":
+            challenge["blockers"].extend("MARKET_ARBITER:"+r for r in market_decision.get("reasons", []))
+        challenge["market_arbiter"]=market_decision
         if challenge["state"]!="PASS" or consensus["state"]!="PASS":
-            return {"state":"NO_BET","reason":"arbiter_blocked","challenge":challenge,"consensus":consensus,"specialists":specialist,"prediction":prediction}
-        return {"state":"FINAL_QUALIFIED","challenge":challenge,"consensus":consensus,"specialists":specialist,"prediction":prediction}
+            return {"state":"NO_BET","reason":"arbiter_blocked","challenge":challenge,"consensus":consensus,"specialists":specialist,"market_arbiter":market_decision,"prediction":prediction}
+        return {"state":"FINAL_QUALIFIED","challenge":challenge,"consensus":consensus,"specialists":specialist,"market_arbiter":market_decision,"prediction":prediction}

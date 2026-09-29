@@ -1,14 +1,14 @@
-# UMIOS TITAN — 10-Point Hardening
+# UMIOS TITAN — 10-Point Hardening v2
 
-1. Incident reconstruction: persisted predictions retain model version, probability, odds, history and simulation metadata for replay.
-2. Data audit: freshness and verification remain hard gates; basketball has a dedicated model path.
-3. Probability correction: basketball no longer uses the football Poisson-goals engine.
-4. Market-specific modeling: total-points probabilities are evaluated at the exact bookmaker line.
-5. Simulation correction: correlated team scoring with a shared pace/scoring shock; 5,000+ simulations.
-6. Tail-risk defense: recent totals, H2H totals, model-line distance and simulated tail probability are checked.
-7. Competition regime: youth/reserve/friendly competitions receive stricter sample requirements.
-8. Confidence separation: raw probability, market edge and calibration are distinct signals.
-9. NO_BET enforcement: insufficient evidence or unsupported model regimes terminate prediction.
-10. Regression protection: automated tests cover basketball routing, thin-history rejection, guard applicability and incident diagnostics.
+1. Incident reconstruction: persist model version, probability, odds, history, simulation metadata and arbiter diagnostics for replay.
+2. Data integrity: freshness, fixture identity, verification conflicts and match-state gates remain hard blockers.
+3. Market-specific modeling: totals, BTTS, handicaps, team totals, corners and cards require market-specific evidence.
+4. Distribution-first simulation: Monte Carlo validates the same model and is never counted as an independent source.
+5. Tail-risk defense: total markets are checked against losing-tail probability, not just headline probability.
+6. Price/value defense: very short prices require materially higher model probability; edge and EV are separate gates.
+7. Source diversity: totals/team-total selections require at least two independent market evidence channels.
+8. Sample-depth defense: total markets require deeper historical support; thin samples terminate in NO_BET.
+9. Adversarial final arbiter: suspicious edges, model-market divergence, volatility and unsupported specialist markets can only block.
+10. Regression protection: incident cases are encoded as tests; calibration and settlement remain closed-loop.
 
-The objective is fewer, better-evidenced candidates rather than forced selections.
+Core rule: incomplete or contradictory evidence produces NO_BET. The system never fills a ticket just to reach a target number of selections.
