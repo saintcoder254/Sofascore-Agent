@@ -63,18 +63,17 @@ class MarketArbiter:
             if n is not None:count=max(count,int(n))
         return count
 
-    @classmethod
-    def _tail(cls,prediction,selection):
-        line=cls._line(cls._selection(selection))
+    def _tail(self,prediction,selection):
+        line=self._line(self._selection(selection))
         if line is None:return {"available":False}
         totals=(prediction.get("probabilities") or {}).get("TOTAL_GOALS") or {}
-        s=cls._selection(selection)
+        s=self._selection(selection)
         if s.startswith(("UNDER ","U")):
-            risk=cls._num(totals.get(f"OVER {line}"))
-            return {"available":risk is not None,"risk":risk,"risk_type":"upper_tail","threshold":cls.max_under_tail}
+            risk=self._num(totals.get(f"OVER {line}"))
+            return {"available":risk is not None,"risk":risk,"risk_type":"upper_tail","threshold":self.max_under_tail}
         if s.startswith(("OVER ","O")):
-            risk=cls._num(totals.get(f"UNDER {line}"))
-            return {"available":risk is not None,"risk":risk,"risk_type":"lower_tail","threshold":cls.max_over_lower_tail}
+            risk=self._num(totals.get(f"UNDER {line}"))
+            return {"available":risk is not None,"risk":risk,"risk_type":"lower_tail","threshold":self.max_over_lower_tail}
         return {"available":False}
 
     @staticmethod
