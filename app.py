@@ -17,6 +17,7 @@ from umios_qualifier import UMIOSQualifier
 from umios_core import UMIOSCoreEngine
 from umios_probability import UMIOSProbabilityEngine
 from umios_arbiter import UMIOSFinalArbiter
+from titan_incident_audit import TitanIncidentAudit
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger=logging.getLogger("emm.poller")
@@ -27,6 +28,7 @@ qualifier=UMIOSQualifier(STALE_AFTER)
 core=UMIOSCoreEngine(odds)
 probability=UMIOSProbabilityEngine()
 arbiter=UMIOSFinalArbiter(store)
+incident_audit=TitanIncidentAudit()
 state={"last_poll":None,"last_success":None,"last_error":None,"last_poll_duration_ms":None,"last_poll_items":0,"polls_total":0,"polls_success":0,"polls_failed":0,"consecutive_failures":0,"next_poll_at":None,"items":0,"running":False,"evolution_running":False,"last_evolution_at":None,"research_running":False,"last_research_at":None,"learning_running":False,"last_learning_at":None,"source_learning_running":False,"last_source_learning_at":None,"verification_learning_running":False,"last_verification_learning_at":None,"enrichment_running":False,"last_enrichment_at":None,"enrichment_items":0,"auto_analyze_items":0,"last_auto_analyze_at":None,"arbiter_passes":0,"arbiter_blocks":0,"active_source":None}
 class PredictionIn(BaseModel):
     prediction_id:str=Field(default_factory=lambda:str(uuid.uuid4())); fixture_id:str; market:str; predicted_probability:float=Field(ge=0,le=1); selection:str|None=None; odds:float|None=Field(default=None,gt=1); model_version:str="unknown"; features:dict=Field(default_factory=dict)
@@ -112,8 +114,8 @@ async def enrichment_loop():
                     arb=arbiter.decide(event,bundle,gate,prediction)
                     if arb.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
                         sel=prediction["selection"]
-                        stable=hashlib.sha256((str(eid)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-MarketSpecific-v3").encode()).hexdigest()
-                        store.add_prediction(prediction_id=stable,fixture_id=eid,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-MarketSpecific-v3",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
+                        stable=hashlib.sha256((str(eid)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|"+str(prediction.get("model","UMIOS-TITAN-MarketSpecific-v3"))).encode()).hexdigest()
+                        store.add_prediction(prediction_id=stable,fixture_id=eid,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version=prediction.get("model","UMIOS-TITAN-MarketSpecific-v3"),features={"expected_goals":prediction.get("expected_goals"),"expected_points":prediction.get("expected_points"),"expected_total":prediction.get("expected_total"),"distribution_sd":prediction.get("distribution_sd"),"history":prediction.get("history"),"edge":sel.get("edge"),"expected_value":sel.get("expected_value"),"simulations":prediction.get("simulations"),"form_trend":prediction.get("form_trend"),"competition_regime":prediction.get("competition_regime"),"model":prediction.get("model")})
                         passes+=1; state["arbiter_passes"]=state.get("arbiter_passes",0)+1; state["last_auto_analyze_at"]=time.time()
                     elif prediction.get("state")=="QUALIFIED_PREDICTION":
                         blocks+=1; state["arbiter_blocks"]=state.get("arbiter_blocks",0)+1
@@ -132,6 +134,9 @@ app=FastAPI(title="Elite MatchMaster Feed Fusion Acquisition Agent",lifespan=lif
 def telemetry_payload():
     now=time.time();age=None if state["last_success"] is None else round(now-state["last_success"],1);fresh_enough=state["last_success"] is not None and age<=STALE_AFTER
     return {"service":"feed-fusion-acquisition-agent","source":state["active_source"] or adapter.active_source,"running":state["running"],"poll_interval_seconds":POLL_SECONDS,"stale_after_seconds":STALE_AFTER,"last_success_age_seconds":age,"data_fresh":fresh_enough,"poller":dict(state),"fusion":dict(adapter.metrics),"scores24":dict(adapter.scores24.metrics),"evolution":evolution.status(),"learning":{"running":state["learning_running"],"prediction_count":store.prediction_count(),"resolved_count":store.resolved_prediction_count(),"performance":store.performance_summary()},"source_learning":{"running":state["source_learning_running"],"min_samples":SOURCE_MIN_SAMPLES,"scores":source_learning.status()},"verification_learning":{"running":state["verification_learning_running"],"min_sources":VERIFICATION_MIN_SOURCES,"last_run_at":state["last_verification_learning_at"]},"enrichment":{"running":state["enrichment_running"],"interval_seconds":ENRICH_SECONDS,"max_fixtures":ENRICH_MAX_FIXTURES,"last_run_at":state["last_enrichment_at"],"items":state["enrichment_items"],"auto_analyze":AUTO_ANALYZE,"auto_analyze_items":state.get("auto_analyze_items",0),"last_auto_analyze_at":state.get("last_auto_analyze_at"),"arbiter_passes":state.get("arbiter_passes",0),"arbiter_blocks":state.get("arbiter_blocks",0)},"odds_intelligence":odds.status(),"generated_at":now}
+@app.get("/audit/incidents")
+async def audit_incidents(limit:int=200):
+    return incident_audit.audit(store,limit=max(1,min(1000,limit)))
 @app.get("/health")
 async def health():t=telemetry_payload();return {"ok":t["data_fresh"],**t}
 @app.get("/status")
