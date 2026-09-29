@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 import math
 import statistics
+import re
 import time
 
 
@@ -107,9 +108,16 @@ class BasketballVolatilityGuard:
             )
         ).upper()
         selection = prediction.get("selection") or {}
-        haystack += " " + str(selection.get("market", "")).upper()
-        haystack += " " + str(selection.get("selection", "")).upper()
-        return "BASKET" in haystack or "NBA" in haystack or "WNBA" in haystack
+        market=str(selection.get("market", "")).upper()
+        raw=str(selection.get("selection", "")).upper()
+        haystack += " " + market + " " + raw
+        if "BASKET" in haystack or "NBA" in haystack or "WNBA" in haystack:return True
+        # Some feeds omit sport metadata. A TOTAL_POINTS line above 50 is a
+        # safe structural basketball signature and avoids silently skipping the guard.
+        if market in cls.TOTAL_MARKETS:
+            m=re.search(r"(?:OVER|UNDER|O|U)\\s*([0-9]+(?:\\.[0-9]+)?)",raw)
+            if m and float(m.group(1))>=50:return True
+        return False
 
     @classmethod
     def _market(cls, prediction: Dict[str, Any]) -> str:
