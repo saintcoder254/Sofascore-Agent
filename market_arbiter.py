@@ -87,7 +87,9 @@ class MarketArbiter:
     def evaluate(self,prediction,evidence):
         sel=prediction.get("selection") or {}
         if not sel:return {"state":"BLOCK","version":self.VERSION,"reasons":["NO_SELECTION"],"generated_at":time.time()}
-        market=self._market(sel.get("market")); selection=self._selection(sel.get("selection"))\n        if market in {"TOTAL_POINTS","BASKETBALL_TOTAL","MONEYLINE_BASKETBALL"}:\n            return {"state":"PASS","version":self.VERSION,"market":market,"selection":selection,"skipped":True,"reasons":[],"warnings":["NON_FOOTBALL_MARKET"] ,"generated_at":time.time()}
+        market=self._market(sel.get("market")); selection=self._selection(sel.get("selection"))
+        if market in {"TOTAL_POINTS","BASKETBALL_TOTAL","MONEYLINE_BASKETBALL"}:
+            return {"state":"PASS","version":self.VERSION,"market":market,"selection":selection,"skipped":True,"reasons":[],"warnings":["NON_FOOTBALL_MARKET"],"generated_at":time.time()}
         odds=self._num(sel.get("odds")); p=self._num(sel.get("model_probability"))
         edge=self._num(sel.get("edge")); ev=self._num(sel.get("expected_value"))
         hist=prediction.get("history") or {}; sample=min(int(hist.get("home_games") or 0),int(hist.get("away_games") or 0))
