@@ -69,3 +69,19 @@ UMIOS TITAN now uses `umios_market_models.py` as a specialist probability layer 
 - Unsupported or evidence-thin markets remain `NO_BET`; the system does not manufacture probabilities.
 
 This architecture separates market generation from final qualification: a market must have both a model probability and sufficient evidence before it can become a persisted prediction.
+
+
+## Basketball hardening — UMIOS TITAN v2
+
+Basketball is now routed away from the legacy football Poisson-goals probability layer. The dedicated `basketball_probability_engine.py` uses point-level offensive/defensive evidence, empirical variance and correlated Monte Carlo scoring scenarios. Total-points probabilities are evaluated at the exact bookmaker line.
+
+The basketball path requires a minimum evidence sample, applies the competition-regime gate, and feeds simulated totals into the existing Basketball Volatility Guard. The guard now detects basketball even when the upstream event omits explicit sport metadata by using a structural TOTAL_POINTS signature.
+
+The hardening layer also includes:
+- `competition_regime_agent.py` for youth/reserve/friendly volatility restrictions.
+- `titan_incident_audit.py` for post-incident replay diagnostics and overconfidence detection.
+- `tests/` regression coverage for basketball routing, thin-history NO_BET behavior, guard applicability and audit logic.
+- `GET /audit/incidents` for persisted outcome diagnostics.
+- `docs/UMIOS_TITAN_10_POINT_HARDENING.md` documenting the ten corrective controls.
+
+The model deliberately prefers NO_BET when the probability model, evidence regime or sample depth is inadequate. Monte Carlo sample count is a simulation parameter, not a substitute for correct model specification.
