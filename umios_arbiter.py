@@ -25,6 +25,8 @@ class UMIOSAdversarialLayer:
         if str(status or "").lower() in {"finished","completed","final","cancelled","postponed","abandoned","suspended"}: blockers.append("MATCH_STATE_INVALID")
         verification=evidence.get("verification") or {}
         if verification.get("conflict") or evidence.get("verification_conflicts"): blockers.append("SOURCE_CONFLICT")
+        trust=evidence.get("data_trust") or {}
+        if trust and trust.get("state")!="TRUSTED": blockers.append("DATA_TRUST_"+str(trust.get("state","MISSING")))
         sel=prediction.get("selection") or {}
         edge=self._num(sel.get("edge")) or 0
         ev=self._num(sel.get("expected_value")) or 0
