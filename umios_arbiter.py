@@ -2,6 +2,7 @@ import math, time
 from umios_specialists import UMIOSSpecialistEnsemble
 from basketball_volatility_guard import BasketballVolatilityGuard
 from market_arbiter import MarketArbiter
+from historical_failure_gate import HistoricalFailureGate
 
 class UMIOSAdversarialLayer:
     """Challenges candidate predictions before final persistence."""
@@ -92,6 +93,7 @@ class UMIOSFinalArbiter:
         self.consensus=UMIOSConsensusLayer(store)
         self.basketball_guard=BasketballVolatilityGuard()
         self.market_arbiter=MarketArbiter()
+        self.failure_gate=HistoricalFailureGate()
 
     def decide(self,event,evidence,gate,prediction):
         if prediction.get("state")!="QUALIFIED_PREDICTION":
@@ -100,6 +102,9 @@ class UMIOSFinalArbiter:
         challenge=self.adversarial.evaluate(prediction,evidence,gate)
         consensus=self.consensus.evaluate(event,prediction)
         sel=prediction.get("selection") or {}
+        failure_evidence=dict(evidence.get("failure_gate") or {})
+        failure_evidence.setdefault("selection_justification", prediction.get("selection_justification"))
+        failure_check=self.failure_gate.evaluate(sel, failure_evidence)
         market=str(sel.get("market") or "")
         market_decision=self.market_arbiter.evaluate(prediction,evidence)
 
@@ -123,6 +128,11 @@ class UMIOSFinalArbiter:
         if market_decision["state"]!="PASS":
             challenge["blockers"].extend("MARKET_ARBITER:"+r for r in market_decision.get("reasons", []))
         challenge["market_arbiter"]=market_decision
-        if challenge["state"]!="PASS" or consensus["state"]!="PASS":
-            return {"state":"NO_BET","reason":"arbiter_blocked","challenge":challenge,"consensus":consensus,"specialists":specialist,"market_arbiter":market_decision,"prediction":prediction}
-        return {"state":"FINAL_QUALIFIED","challenge":challenge,"consensus":consensus,"specialists":specialist,"market_arbiter":market_decision,"prediction":prediction}
+        challenge["historical_failure_gate"]=failure_check
+        if failure_check["state"]=="BLOCK":
+            challenge["blockers"].extend("HISTORICAL_FAILURE:"+b for b in failure_check["blockers"])
+        if failure_check["warnings"]:
+            challenge["warnings"].extend("HISTORICAL_FAILURE:"+w for w in failure_check["warnings"])
+        if challenge["state"]!="PASS" or consensus["state"]!="PASS" or failure_check["state"]=="BLOCK":
+            return {"state":"NO_BET","reason":"arbiter_blocked","challenge":challenge,"consensus":consensus,"specialists":specialist,"market_arbiter":market_decision,"failure_gate":failure_check,"prediction":prediction}
+        return {"state":"FINAL_QUALIFIED","challenge":challenge,"consensus":consensus,"specialists":specialist,"market_arbiter":market_decision,"failure_gate":failure_check,"prediction":prediction}
