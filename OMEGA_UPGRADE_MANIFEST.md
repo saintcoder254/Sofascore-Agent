@@ -28,3 +28,10 @@ GOALS
 - strict source/freshness/conflict controls
 - no fabricated coverage
 - NO BET preserved as valid outcome
+
+
+HISTORICAL FAILURE HARDENING
+- historical_failure_gate.py
+- tests/test_historical_failure_gate.py
+- docs/HISTORICAL_FAILURE_GATE.md
+- Final Arbiter integration: every candidate is explicitly challenged against documented failure archetypes before approval.
