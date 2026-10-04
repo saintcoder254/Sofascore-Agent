@@ -233,6 +233,10 @@ class CaseDatabase:
         self.db.commit()
         return decision_hash
 
+    def export_audit_events(self):
+        rows=self.db.execute("SELECT sequence,created_at,event_type,payload_hash,parent_hash,chain_hash,payload_json FROM audit_chain ORDER BY sequence").fetchall()
+        return [dict(case_id=self.case_id,sequence=r[0],created_at=r[1],event_type=r[2],payload_hash=r[3],parent_hash=r[4],chain_hash=r[5],payload=json.loads(r[6])) for r in rows]
+
     def record_failure(self, code, severity="BLOCK", evidence=None):
         self.db.execute(
             "INSERT INTO failures(created_at,failure_code,severity,evidence_json) VALUES(?,?,?,?)",
