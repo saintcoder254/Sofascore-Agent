@@ -288,7 +288,10 @@ def _persist_case_analysis(event_id, bundle, prediction, arbiter_decision):
     if arbiter_decision.get("state")=="NO_BET":
         for blocker in ((arbiter_decision.get("challenge") or {}).get("blockers") or []):
             case.record_failure(blocker,"BLOCK",{"reason":arbiter_decision.get("reason")})
+    events=case.export_audit_events()
+    federated=store.federate_case_events(event_id,events)
     summary=case.summary()
+    summary['global_audit_federated_events']=federated
     case.close()
     return summary
 
