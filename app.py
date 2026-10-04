@@ -219,6 +219,26 @@ async def learning_leagues():
 async def learning_leagues_run():
     rows=store.predictions_with_outcomes()
     return {"agent":"OMEGA League Intelligence Engine","settled_samples":len(rows),"report":omega_leagues.rank(rows)}
+@app.get("/cases")
+async def cases(limit:int=100):
+    return {"agent":"OMEGA Case Database Mesh","cases":case_databases.list_cases(limit)}
+@app.get("/case/{fixture_id}")
+async def case_summary(fixture_id:str):
+    case=case_databases.open(fixture_id); result=case.summary(); case.close(); return result
+@app.get("/case/{fixture_id}/audit")
+async def case_audit(fixture_id:str):
+    import json
+    case=case_databases.open(fixture_id)
+    rows=case.db.execute("SELECT sequence,created_at,event_type,payload_hash,parent_hash,chain_hash,payload_json FROM audit_chain ORDER BY sequence").fetchall()
+    result={"case_id":fixture_id,"chain":case.verify_chain(),"events":[{"sequence":r[0],"created_at":r[1],"event_type":r[2],"payload_hash":r[3],"parent_hash":r[4],"chain_hash":r[5],"payload":json.loads(r[6])} for r in rows]}
+    case.close(); return result
+@app.get("/case/{fixture_id}/trust")
+async def case_trust(fixture_id:str):
+    import json
+    case=case_databases.open(fixture_id)
+    row=case.db.execute("SELECT created_at,state,envelope_hash,hard_blocks_json,envelope_json FROM trust_events ORDER BY id DESC LIMIT 1").fetchone()
+    result=None if not row else {"created_at":row[0],"state":row[1],"envelope_hash":row[2],"hard_blocks":json.loads(row[3]),"envelope":json.loads(row[4])}
+    chain=case.verify_chain(); case.close(); return {"case_id":fixture_id,"trust":result,"chain":chain}
 @app.get("/integrity/trust/{fixture_id}")
 async def integrity_trust(fixture_id:str):
     row=store.get_current(fixture_id)
@@ -239,11 +259,37 @@ async def analyze_fixture(event_id:str):
     analysis=core.analyze(event_id,bundle,gate)
     prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
     arbiter_decision=arbiter.decide(event,bundle,gate,prediction)
+    case_summary=_persist_case_analysis(event_id,bundle,prediction,arbiter_decision)
     if arbiter_decision.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
         sel=prediction["selection"]
         stable=hashlib.sha256((str(event_id)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-MarketSpecific-v3").encode()).hexdigest()
         store.add_prediction(prediction_id=stable,fixture_id=event_id,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-MarketSpecific-v3",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
-    return {"engine":"Elite MatchMaster UMIOS TITAN","fixture_id":event_id,"qualification":gate,"analysis":analysis,"prediction":prediction,"arbiter":arbiter_decision,"evidence":bundle if gate["state"]=="QUALIFIED" else {"event":bundle.get("event"),"odds":bundle.get("odds"),"verification":bundle.get("verification"),"retrieved_at":bundle.get("retrieved_at")},"prediction_status":arbiter_decision.get("state","NO_BET"),"generated_at":time.time()}
+    return {"engine":"Elite MatchMaster UMIOS TITAN","fixture_id":event_id,"qualification":gate,"analysis":analysis,"prediction":prediction,"arbiter":arbiter_decision,"case_database":case_summary,"evidence":bundle if gate["state"]=="QUALIFIED" else {"event":bundle.get("event"),"odds":bundle.get("odds"),"verification":bundle.get("verification"),"retrieved_at":bundle.get("retrieved_at")},"prediction_status":arbiter_decision.get("state","NO_BET"),"generated_at":time.time()}
+
+
+def _persist_case_analysis(event_id, bundle, prediction, arbiter_decision):
+    case=case_databases.open(event_id)
+    event=bundle.get("event") or {}
+    case.record_observation("ACQUISITION","match_acquisition","sofascore",event,status="RECEIVED")
+    for section in ("statistics","shotmap","incidents","lineups","h2h","history","odds","verification","final_results"):
+        payload=bundle.get(section)
+        if payload is not None:
+            case.record_observation("EVIDENCE",section,"sofascore" if section not in {"verification","final_results"} else "verification",payload,status="RECEIVED")
+    if bundle.get("data_trust"):
+        case.record_trust(bundle["data_trust"])
+    selection=prediction.get("selection") or {}
+    case.record_model_run(prediction.get("model","UMIOS-TITAN"),selection.get("market"),prediction,int(prediction.get("simulations") or 0),{"event":event,"trust":bundle.get("data_trust")})
+    if selection.get("market") and selection.get("odds"):
+        odds_value=float(selection["odds"])
+        case.record_market(selection["market"],selection.get("selection"),odds_value,1.0/odds_value,"decision",selection)
+        case.record_prediction(selection)
+    case.record_arbiter(arbiter_decision)
+    if arbiter_decision.get("state")=="NO_BET":
+        for blocker in ((arbiter_decision.get("challenge") or {}).get("blockers") or []):
+            case.record_failure(blocker,"BLOCK",{"reason":arbiter_decision.get("reason")})
+    summary=case.summary()
+    case.close()
+    return summary
 
 class MatchGatewayIn(BaseModel):
     home: str
@@ -285,6 +331,7 @@ async def _run_fixture_analysis(event_id: str):
     analysis=core.analyze(event_id,bundle,gate)
     prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
     arbiter_decision=arbiter.decide(event,bundle,gate,prediction)
+    case_summary=_persist_case_analysis(event_id,bundle,prediction,arbiter_decision)
     if arbiter_decision.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
         sel=prediction["selection"]
         stable=hashlib.sha256((str(event_id)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-MarketSpecific-v3").encode()).hexdigest()
