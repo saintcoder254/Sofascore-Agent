@@ -22,6 +22,7 @@ from omega_weight_engine import OmegaWeightEngine
 from calibration_pipeline import CalibrationPipeline
 from omega_promotion_gate import OmegaPromotionGate
 from oos_model_tournament import OOSModelTournament
+from league_intelligence_engine import LeagueIntelligenceEngine
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger=logging.getLogger("emm.poller")
@@ -36,6 +37,7 @@ incident_audit=TitanIncidentAudit()
 omega_weights=OmegaWeightEngine(min_samples=int(os.getenv("OMEGA_WEIGHT_MIN_SAMPLES","50")))
 omega_calibration=CalibrationPipeline(min_train=int(os.getenv("OMEGA_CAL_MIN_TRAIN","50")),min_test=int(os.getenv("OMEGA_CAL_MIN_TEST","20")))
 omega_promotion=OmegaPromotionGate(min_samples=int(os.getenv("OMEGA_PROMOTION_MIN_SAMPLES","100")),min_clv_samples=int(os.getenv("OMEGA_PROMOTION_MIN_CLV","20")))
+omega_leagues=LeagueIntelligenceEngine(min_samples=int(os.getenv("OMEGA_LEAGUE_MIN_SAMPLES","30")),proven_samples=int(os.getenv("OMEGA_LEAGUE_PROVEN_SAMPLES","100")))
 state={"last_poll":None,"last_success":None,"last_error":None,"last_poll_duration_ms":None,"last_poll_items":0,"polls_total":0,"polls_success":0,"polls_failed":0,"consecutive_failures":0,"next_poll_at":None,"items":0,"running":False,"evolution_running":False,"last_evolution_at":None,"research_running":False,"last_research_at":None,"learning_running":False,"last_learning_at":None,"source_learning_running":False,"last_source_learning_at":None,"verification_learning_running":False,"last_verification_learning_at":None,"enrichment_running":False,"last_enrichment_at":None,"enrichment_items":0,"auto_analyze_items":0,"last_auto_analyze_at":None,"arbiter_passes":0,"arbiter_blocks":0,"active_source":None}
 class PredictionIn(BaseModel):
     prediction_id:str=Field(default_factory=lambda:str(uuid.uuid4())); fixture_id:str; market:str; predicted_probability:float=Field(ge=0,le=1); selection:str|None=None; odds:float|None=Field(default=None,gt=1); model_version:str="unknown"; features:dict=Field(default_factory=dict)
@@ -205,6 +207,14 @@ async def learning_sources_run():return source_learning.run()
 async def learning_verify():return {"agent":"Independent Result Verification Agent","required_sources":VERIFICATION_MIN_SOURCES,"running":state["verification_learning_running"],"last_run_at":state["last_verification_learning_at"]}
 @app.post("/learning/verify/run")
 async def learning_verify_run():return verification_learning.run()
+@app.get("/learning/leagues")
+async def learning_leagues():
+    rows=store.predictions_with_outcomes()
+    return {"agent":"OMEGA League Intelligence Engine","settled_samples":len(rows),"report":omega_leagues.rank(rows)}
+@app.post("/learning/leagues/run")
+async def learning_leagues_run():
+    rows=store.predictions_with_outcomes()
+    return {"agent":"OMEGA League Intelligence Engine","settled_samples":len(rows),"report":omega_leagues.rank(rows)}
 @app.get("/odds")
 async def odds_status():return odds.status()
 @app.get("/sources/scores24")
