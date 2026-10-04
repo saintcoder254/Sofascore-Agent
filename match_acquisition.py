@@ -38,6 +38,21 @@ class MatchAcquisitionEngine:
 
     async def acquire(self,event_id):
         bundle=await self.enrich_event(event_id)
-        try: bundle["verification"]=await self.fusion.verify_futbol24()
-        except Exception as exc: bundle["verification"]={"error":repr(exc)}
+        try:
+            bundle["verification"]=await self.fusion.verify_futbol24()
+            bundle["final_results"]=await self.fusion.verify_final_results(bundle["verification"])
+            observations=[{"source":"sofascore","retrieved_at":bundle.get("retrieved_at",time.time()),"payload":bundle.get("event") or {}}]
+            for source_payload in bundle["final_results"].get("sources",[]) or []:
+                source=str(source_payload.get("source") or "")
+                for event in source_payload.get("events",[]) or []:
+                    eh=str((bundle.get("event") or {}).get("homeTeam",{}).get("name","")).strip().lower()
+                    ea=str((bundle.get("event") or {}).get("awayTeam",{}).get("name","")).strip().lower()
+                    wh=str((event.get("homeTeam") or {}).get("name","")).strip().lower()
+                    wa=str((event.get("awayTeam") or {}).get("name","")).strip().lower()
+                    if eh and ea and eh==wh and ea==wa:
+                        observations.append({"source":source,"retrieved_at":source_payload.get("retrieved_at",time.time()),"payload":event})
+            bundle["data_trust"]=self.fusion.trust_mesh.evaluate(observations,{"now":time.time()})
+        except Exception as exc:
+            bundle["verification"]={"error":repr(exc)}
+            bundle["data_trust"]={"state":"QUARANTINED","hard_blocks":["TRUST_PIPELINE_ERROR"],"error":repr(exc)}
         return bundle
