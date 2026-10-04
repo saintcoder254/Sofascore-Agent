@@ -45,7 +45,7 @@ class LeagueIntelligenceEngine:
             if r.get("predicted_probability") is not None and r.get("outcome") is not None
         ])
         logloss = self._mean([
-            -(float(r["outcome"]) * math.log(max(1e-12, min(1 - 1e-12, float(r["predicted_probability"]))))
+            -float(r["outcome"]) * math.log(max(1e-12, min(1 - 1e-12, float(r["predicted_probability"]))))
             - (1 - float(r["outcome"])) * math.log(max(1e-12, min(1 - 1e-12, 1 - float(r["predicted_probability"]))))
             for r in rows
             if r.get("predicted_probability") is not None and r.get("outcome") is not None
