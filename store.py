@@ -1,28 +1,61 @@
 import sqlite3, json, time
+from prediction_ledger_guard import PredictionLedgerGuard
 
 class Store:
     def __init__(self,path):
         self.db=sqlite3.connect(path,check_same_thread=False)
         self.db.execute('CREATE TABLE IF NOT EXISTS snapshots(fixture_id TEXT NOT NULL,retrieved_at REAL NOT NULL,payload_hash TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(fixture_id,retrieved_at))')
         self.db.execute('CREATE TABLE IF NOT EXISTS current(fixture_id TEXT PRIMARY KEY,retrieved_at REAL NOT NULL,payload_hash TEXT NOT NULL,payload TEXT NOT NULL)')
-        self.db.execute('CREATE TABLE IF NOT EXISTS predictions(prediction_id TEXT PRIMARY KEY,fixture_id TEXT NOT NULL,market TEXT NOT NULL,predicted_probability REAL NOT NULL,selection TEXT,odds REAL,predicted_at REAL NOT NULL,outcome REAL,outcome_at REAL,model_version TEXT NOT NULL,features_json TEXT NOT NULL)')
+        self.db.execute('CREATE TABLE IF NOT EXISTS predictions(prediction_id TEXT PRIMARY KEY,fixture_id TEXT NOT NULL,market TEXT NOT NULL,predicted_probability REAL NOT NULL,selection TEXT,odds REAL,predicted_at REAL NOT NULL,outcome REAL,outcome_at REAL,model_version TEXT NOT NULL,features_json TEXT NOT NULL,frozen_at REAL,schema_version TEXT,record_hash TEXT)')
+        self._migrate_predictions()
         self.db.execute('CREATE TABLE IF NOT EXISTS evolution_runs(run_id TEXT PRIMARY KEY,created_at REAL NOT NULL,result_json TEXT NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS evolution_candidates(candidate_id TEXT PRIMARY KEY,created_at REAL NOT NULL,candidate_json TEXT NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS external_observations(id INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL,retrieved_at REAL NOT NULL,fixture_key TEXT NOT NULL,home TEXT,away TEXT,kickoff TEXT,market TEXT,selection TEXT,raw_json TEXT NOT NULL,outcome REAL,outcome_at REAL)')
         self.db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_external_dedupe ON external_observations(source,fixture_key,kickoff,market,selection)')
         self.db.commit()
+    def _migrate_predictions(self):
+        cols={r[1] for r in self.db.execute('PRAGMA table_info(predictions)').fetchall()}
+        for name,sql in (('frozen_at','ALTER TABLE predictions ADD COLUMN frozen_at REAL'),('schema_version','ALTER TABLE predictions ADD COLUMN schema_version TEXT'),('record_hash','ALTER TABLE predictions ADD COLUMN record_hash TEXT')):
+            if name not in cols:self.db.execute(sql)
+        self.db.commit()
+
     def get_current(self,fixture_id):
         r=self.db.execute('SELECT retrieved_at,payload_hash,payload FROM current WHERE fixture_id=?',(fixture_id,)).fetchone(); return None if not r else {'retrieved_at':r[0],'payload_hash':r[1],'payload':json.loads(r[2])}
     def put(self,fixture_id,retrieved_at,payload_hash,payload):
         raw=json.dumps(payload,separators=(',',':')); self.db.execute('INSERT OR REPLACE INTO snapshots VALUES(?,?,?,?)',(str(fixture_id),retrieved_at,payload_hash,raw)); self.db.execute('INSERT OR REPLACE INTO current VALUES(?,?,?,?)',(str(fixture_id),retrieved_at,payload_hash,raw)); self.db.commit()
     def current(self): return [{'fixture_id':r[0],'retrieved_at':r[1],'payload_hash':r[2],'payload':json.loads(r[3])} for r in self.db.execute('SELECT fixture_id,retrieved_at,payload_hash,payload FROM current').fetchall()]
     def add_prediction(self,prediction_id,fixture_id,market,predicted_probability,selection=None,odds=None,predicted_at=None,model_version='unknown',features=None):
-        self.db.execute('INSERT OR REPLACE INTO predictions VALUES(?,?,?,?,?,?,?,?,?,?,?)',(prediction_id,str(fixture_id),market,float(predicted_probability),selection,None if odds is None else float(odds),predicted_at or time.time(),None,None,model_version,json.dumps(features or {},separators=(',',':')))); self.db.commit()
+        ts=predicted_at or time.time(); feats=dict(features or {})
+        frozen=PredictionLedgerGuard().freeze({'prediction_id':prediction_id,'fixture_id':str(fixture_id),'market':market,'predicted_probability':float(predicted_probability),'selection':selection,'odds':None if odds is None else float(odds),'predicted_at':ts,'model_version':model_version,'features':feats})
+        self.db.execute('INSERT OR REPLACE INTO predictions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            (prediction_id,str(fixture_id),market,float(predicted_probability),selection,None if odds is None else float(odds),ts,None,None,model_version,json.dumps(feats,separators=(',',':')),frozen['frozen_at'],frozen['schema_version'],frozen['record_hash']))
+        self.db.commit()
     def record_outcome(self,prediction_id,outcome,outcome_at=None): self.db.execute('UPDATE predictions SET outcome=?,outcome_at=? WHERE prediction_id=?',(float(outcome),outcome_at or time.time(),prediction_id)); self.db.commit()
     def predictions_with_outcomes(self):
-        rows=self.db.execute('SELECT prediction_id,fixture_id,market,predicted_probability,selection,odds,predicted_at,outcome,outcome_at,model_version,features_json FROM predictions WHERE outcome IS NOT NULL').fetchall(); return [dict(prediction_id=r[0],fixture_id=r[1],market=r[2],predicted_probability=r[3],selection=r[4],odds=r[5],predicted_at=r[6],outcome=r[7],outcome_at=r[8],model_version=r[9],features=json.loads(r[10] or '{}')) for r in rows]
+        rows=self.db.execute('SELECT prediction_id,fixture_id,market,predicted_probability,selection,odds,predicted_at,outcome,outcome_at,model_version,features_json,frozen_at,schema_version,record_hash FROM predictions WHERE outcome IS NOT NULL').fetchall(); return [dict(prediction_id=r[0],fixture_id=r[1],market=r[2],predicted_probability=r[3],selection=r[4],odds=r[5],predicted_at=r[6],outcome=r[7],outcome_at=r[8],model_version=r[9],features=json.loads(r[10] or '{}'),frozen_at=r[11],schema_version=r[12],record_hash=r[13]) for r in rows]
     def pending_predictions(self):
-        rows=self.db.execute('SELECT prediction_id,fixture_id,market,predicted_probability,selection,odds,predicted_at,outcome,outcome_at,model_version,features_json FROM predictions WHERE outcome IS NULL').fetchall(); return [dict(prediction_id=r[0],fixture_id=r[1],market=r[2],predicted_probability=r[3],selection=r[4],odds=r[5],predicted_at=r[6],outcome=r[7],outcome_at=r[8],model_version=r[9],features=json.loads(r[10] or '{}')) for r in rows]
+        rows=self.db.execute('SELECT prediction_id,fixture_id,market,predicted_probability,selection,odds,predicted_at,outcome,outcome_at,model_version,features_json,frozen_at,schema_version,record_hash FROM predictions WHERE outcome IS NULL').fetchall(); return [dict(prediction_id=r[0],fixture_id=r[1],market=r[2],predicted_probability=r[3],selection=r[4],odds=r[5],predicted_at=r[6],outcome=r[7],outcome_at=r[8],model_version=r[9],features=json.loads(r[10] or '{}')) for r in rows]
+    def verify_prediction_ledger(self,prediction_id=None):
+        q='SELECT prediction_id,fixture_id,market,predicted_probability,selection,odds,predicted_at,model_version,features_json,frozen_at,schema_version,record_hash FROM predictions'
+        args=()
+        if prediction_id:q+=' WHERE prediction_id=?';args=(prediction_id,)
+        rows=self.db.execute(q,args).fetchall(); guard=PredictionLedgerGuard(); out=[]
+        for r in rows:
+            rec={'prediction_id':r[0],'fixture_id':r[1],'market':r[2],'predicted_probability':r[3],'selection':r[4],'odds':r[5],'predicted_at':r[6],'model_version':r[7],'features':json.loads(r[8] or '{}'),'frozen_at':r[9],'schema_version':r[10],'record_hash':r[11]}
+            out.append({'prediction_id':r[0],**guard.verify(rec)})
+        return out
+
+    def calibration_ledger(self):
+        return [{'predicted_at':r['predicted_at'],'p':r['predicted_probability'],'y':r['outcome'],'model':r['model_version'],'market':r['market'],'competition':(r.get('features') or {}).get('competition')} for r in self.predictions_with_outcomes()]
+
+    def omega_weight_report(self,market=None,competition=None):
+        from omega_weight_engine import OmegaWeightEngine
+        return OmegaWeightEngine().evaluate(self.calibration_ledger(),market,competition)
+
+    def omega_calibration_report(self):
+        from calibration_pipeline import CalibrationPipeline
+        return CalibrationPipeline().run(self.calibration_ledger())
+
     def prediction_count(self): return self.db.execute('SELECT COUNT(*) FROM predictions').fetchone()[0]
     def resolved_prediction_count(self): return self.db.execute('SELECT COUNT(*) FROM predictions WHERE outcome IS NOT NULL').fetchone()[0]
     def performance_summary(self):
