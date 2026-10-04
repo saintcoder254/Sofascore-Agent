@@ -6,7 +6,7 @@ class Store:
         self.db=sqlite3.connect(path,check_same_thread=False)
         self.db.execute('CREATE TABLE IF NOT EXISTS snapshots(fixture_id TEXT NOT NULL,retrieved_at REAL NOT NULL,payload_hash TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(fixture_id,retrieved_at))')
         self.db.execute('CREATE TABLE IF NOT EXISTS current(fixture_id TEXT PRIMARY KEY,retrieved_at REAL NOT NULL,payload_hash TEXT NOT NULL,payload TEXT NOT NULL)')
-        self.db.execute('CREATE TABLE IF NOT EXISTS predictions(prediction_id TEXT PRIMARY KEY,fixture_id TEXT NOT NULL,market TEXT NOT NULL,predicted_probability REAL NOT NULL,selection TEXT,odds REAL,predicted_at REAL NOT NULL,outcome REAL,outcome_at REAL,model_version TEXT NOT NULL,features_json TEXT NOT NULL,frozen_at REAL,schema_version TEXT,record_hash TEXT)')
+        self.db.execute('CREATE TABLE IF NOT EXISTS predictions(prediction_id TEXT PRIMARY KEY,fixture_id TEXT NOT NULL,market TEXT NOT NULL,predicted_probability REAL NOT NULL,selection TEXT,odds REAL,predicted_at REAL NOT NULL,outcome REAL,outcome_at REAL,model_version TEXT NOT NULL,features_json TEXT NOT NULL,frozen_at REAL,schema_version TEXT,record_hash TEXT,closing_odds REAL,closing_at REAL,closing_source TEXT)')
         self._migrate_predictions()
         self.db.execute('CREATE TABLE IF NOT EXISTS evolution_runs(run_id TEXT PRIMARY KEY,created_at REAL NOT NULL,result_json TEXT NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS evolution_candidates(candidate_id TEXT PRIMARY KEY,created_at REAL NOT NULL,candidate_json TEXT NOT NULL)')
@@ -15,7 +15,7 @@ class Store:
         self.db.commit()
     def _migrate_predictions(self):
         cols={r[1] for r in self.db.execute('PRAGMA table_info(predictions)').fetchall()}
-        for name,sql in (('frozen_at','ALTER TABLE predictions ADD COLUMN frozen_at REAL'),('schema_version','ALTER TABLE predictions ADD COLUMN schema_version TEXT'),('record_hash','ALTER TABLE predictions ADD COLUMN record_hash TEXT')):
+        for name,sql in (('frozen_at','ALTER TABLE predictions ADD COLUMN frozen_at REAL'),('schema_version','ALTER TABLE predictions ADD COLUMN schema_version TEXT'),('record_hash','ALTER TABLE predictions ADD COLUMN record_hash TEXT'),('closing_odds','ALTER TABLE predictions ADD COLUMN closing_odds REAL'),('closing_at','ALTER TABLE predictions ADD COLUMN closing_at REAL'),('closing_source','ALTER TABLE predictions ADD COLUMN closing_source TEXT')):
             if name not in cols:self.db.execute(sql)
         self.db.commit()
 
@@ -27,14 +27,14 @@ class Store:
     def add_prediction(self,prediction_id,fixture_id,market,predicted_probability,selection=None,odds=None,predicted_at=None,model_version='unknown',features=None):
         ts=predicted_at or time.time(); feats=dict(features or {})
         frozen=PredictionLedgerGuard().freeze({'prediction_id':prediction_id,'fixture_id':str(fixture_id),'market':market,'predicted_probability':float(predicted_probability),'selection':selection,'odds':None if odds is None else float(odds),'predicted_at':ts,'model_version':model_version,'features':feats})
-        self.db.execute('INSERT OR REPLACE INTO predictions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-            (prediction_id,str(fixture_id),market,float(predicted_probability),selection,None if odds is None else float(odds),ts,None,None,model_version,json.dumps(feats,separators=(',',':')),frozen['frozen_at'],frozen['schema_version'],frozen['record_hash']))
+        self.db.execute('INSERT OR REPLACE INTO predictions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            (prediction_id,str(fixture_id),market,float(predicted_probability),selection,None if odds is None else float(odds),ts,None,None,model_version,json.dumps(feats,separators=(',',':')),frozen['frozen_at'],frozen['schema_version'],frozen['record_hash'],None,None,None))
         self.db.commit()
     def record_outcome(self,prediction_id,outcome,outcome_at=None): self.db.execute('UPDATE predictions SET outcome=?,outcome_at=? WHERE prediction_id=?',(float(outcome),outcome_at or time.time(),prediction_id)); self.db.commit()
     def predictions_with_outcomes(self):
-        rows=self.db.execute('SELECT prediction_id,fixture_id,market,predicted_probability,selection,odds,predicted_at,outcome,outcome_at,model_version,features_json,frozen_at,schema_version,record_hash FROM predictions WHERE outcome IS NOT NULL').fetchall(); return [dict(prediction_id=r[0],fixture_id=r[1],market=r[2],predicted_probability=r[3],selection=r[4],odds=r[5],predicted_at=r[6],outcome=r[7],outcome_at=r[8],model_version=r[9],features=json.loads(r[10] or '{}'),frozen_at=r[11],schema_version=r[12],record_hash=r[13],closing_odds=r[14],closing_at=r[15],closing_source=r[16]) for r in rows]
+        rows=self.db.execute('SELECT prediction_id,fixture_id,market,predicted_probability,selection,odds,predicted_at,outcome,outcome_at,model_version,features_json,frozen_at,schema_version,record_hash,closing_odds,closing_at,closing_source FROM predictions WHERE outcome IS NOT NULL').fetchall(); return [dict(prediction_id=r[0],fixture_id=r[1],market=r[2],predicted_probability=r[3],selection=r[4],odds=r[5],predicted_at=r[6],outcome=r[7],outcome_at=r[8],model_version=r[9],features=json.loads(r[10] or '{}'),frozen_at=r[11],schema_version=r[12],record_hash=r[13],closing_odds=r[14],closing_at=r[15],closing_source=r[16]) for r in rows]
     def pending_predictions(self):
-        rows=self.db.execute('SELECT prediction_id,fixture_id,market,predicted_probability,selection,odds,predicted_at,outcome,outcome_at,model_version,features_json,frozen_at,schema_version,record_hash FROM predictions WHERE outcome IS NULL').fetchall(); return [dict(prediction_id=r[0],fixture_id=r[1],market=r[2],predicted_probability=r[3],selection=r[4],odds=r[5],predicted_at=r[6],outcome=r[7],outcome_at=r[8],model_version=r[9],features=json.loads(r[10] or '{}'),frozen_at=r[11],schema_version=r[12],record_hash=r[13]) for r in rows]
+        rows=self.db.execute('SELECT prediction_id,fixture_id,market,predicted_probability,selection,odds,predicted_at,outcome,outcome_at,model_version,features_json,frozen_at,schema_version,record_hash,closing_odds,closing_at,closing_source FROM predictions WHERE outcome IS NULL').fetchall(); return [dict(prediction_id=r[0],fixture_id=r[1],market=r[2],predicted_probability=r[3],selection=r[4],odds=r[5],predicted_at=r[6],outcome=r[7],outcome_at=r[8],model_version=r[9],features=json.loads(r[10] or '{}'),frozen_at=r[11],schema_version=r[12],record_hash=r[13],closing_odds=r[14],closing_at=r[15],closing_source=r[16]) for r in rows]
     def verify_prediction_ledger(self,prediction_id=None):
         q='SELECT prediction_id,fixture_id,market,predicted_probability,selection,odds,predicted_at,model_version,features_json,frozen_at,schema_version,record_hash FROM predictions'
         args=()
@@ -44,6 +44,27 @@ class Store:
             rec={'prediction_id':r[0],'fixture_id':r[1],'market':r[2],'predicted_probability':r[3],'selection':r[4],'odds':r[5],'predicted_at':r[6],'model_version':r[7],'features':json.loads(r[8] or '{}'),'frozen_at':r[9],'schema_version':r[10],'record_hash':r[11]}
             out.append({'prediction_id':r[0],**guard.verify(rec)})
         return out
+
+    def record_closing_odds(self,prediction_id,closing_odds,closing_at=None,closing_source=None):
+        if closing_odds is None or float(closing_odds) <= 1: raise ValueError("closing_odds must be greater than 1")
+        row=self.db.execute('SELECT predicted_at,closing_odds FROM predictions WHERE prediction_id=?',(prediction_id,)).fetchone()
+        if not row: raise KeyError(prediction_id)
+        if row[1] is not None: raise ValueError("CLOSING_ODDS_ALREADY_SET")
+        ts=closing_at or time.time()
+        if float(ts) < float(row[0]): raise ValueError("CLOSING_TIME_BEFORE_DECISION")
+        self.db.execute('UPDATE predictions SET closing_odds=?,closing_at=?,closing_source=? WHERE prediction_id=?',(float(closing_odds),ts,closing_source,prediction_id)); self.db.commit()
+
+    def market_benchmark_ledger(self):
+        from market_benchmark_engine import MarketBenchmarkEngine
+        engine=MarketBenchmarkEngine()
+        return [dict(prediction_id=r['prediction_id'],model=r['model_version'],market=r['market'],competition=(r.get('features') or {}).get('competition'),odds=r['odds'],closing_odds=r.get('closing_odds'),clv=engine.clv(r['odds'],r.get('closing_odds'))) for r in self.predictions_with_outcomes() if r.get('odds') and r.get('closing_odds')]
+
+    def market_benchmark_report(self,market=None,competition=None):
+        rows=self.market_benchmark_ledger()
+        if market: rows=[r for r in rows if r['market']==market]
+        if competition: rows=[r for r in rows if r['competition']==competition]
+        clvs=[r['clv'] for r in rows if r['clv'] is not None]
+        return {'samples':len(rows),'clv_available':len(clvs),'avg_clv':None if not clvs else sum(clvs)/len(clvs),'positive_clv_rate':None if not clvs else sum(x>0 for x in clvs)/len(clvs),'min_clv':None if not clvs else min(clvs),'max_clv':None if not clvs else max(clvs)}
 
     def calibration_ledger(self):
         return [{'predicted_at':r['predicted_at'],'p':r['predicted_probability'],'y':r['outcome'],'model':r['model_version'],'market':r['market'],'competition':(r.get('features') or {}).get('competition')} for r in self.predictions_with_outcomes()]
