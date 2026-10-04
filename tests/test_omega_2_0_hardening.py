@@ -1,4 +1,7 @@
 import unittest
+import tempfile
+import os
+from store import Store
 from prediction_ledger_guard import PredictionLedgerGuard
 from calibration_engine import CalibrationEngine
 from market_benchmark_engine import MarketBenchmarkEngine
@@ -16,5 +19,20 @@ class TestOmegaHardening(unittest.TestCase):
     def test_weight_engine_shadows_thin_models(self):
         out=OmegaWeightEngine(min_samples=20).evaluate([{"model":"poisson","p":.6,"y":1},{"model":"market","p":.55,"y":0}])
         self.assertTrue(all(x["status"]=="SHADOW" for x in out["models"]))
+    def test_store_freezes_prediction_and_exposes_calibration_ledger(self):
+        fd,path=tempfile.mkstemp(); os.close(fd)
+        try:
+            s=Store(path)
+            s.add_prediction("p1","fx1","1X2",.62,selection="1",odds=2.0,model_version="poisson",features={"competition":"Test League"})
+            checks=s.verify_prediction_ledger("p1")
+            self.assertTrue(checks[0]["valid"])
+            s.record_outcome("p1",1)
+            ledger=s.calibration_ledger()
+            self.assertEqual(ledger[0]["p"],.62)
+            self.assertEqual(ledger[0]["y"],1.0)
+            self.assertEqual(ledger[0]["competition"],"Test League")
+        finally:
+            os.unlink(path)
+
     def test_pipeline_blocks_live_adjustment_without_data(self):
         out=CalibrationPipeline(min_train=20,min_test=10).run([{"predicted_at":1,"p":.6,"y":1}]*5); self.assertFalse(out["live_adjustment"])
