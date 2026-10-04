@@ -4,6 +4,8 @@ from umios_market_models import UMIOSMarketModels
 from basketball_probability_engine import BasketballProbabilityEngine
 from competition_regime_agent import CompetitionRegimeAgent
 from empirical_goal_engine import EmpiricalGoalEngine
+from dynamic_strength_engine import DynamicStrengthEngine
+from competition_regime_engine import CompetitionRegimeEngine
 
 class UMIOSProbabilityEngine:
     """Conservative probability engine with market-specific models, Monte Carlo, form, and value gates."""
@@ -12,6 +14,8 @@ class UMIOSProbabilityEngine:
         self.basketball=BasketballProbabilityEngine()
         self.regime=CompetitionRegimeAgent()
         self.empirical=EmpiricalGoalEngine()
+        self.dynamic_strength=DynamicStrengthEngine()
+        self.competition_regime=CompetitionRegimeEngine()
     MARKETS=("1X2","BTTS","TOTAL_GOALS","DOUBLE_CHANCE","DNB","CORRECT_SCORE","CORNERS","CARDS","HANDICAP")
     FINISHED={"post","final","finished","completed"}
 
@@ -191,6 +195,8 @@ class UMIOSProbabilityEngine:
         grid=self._grid(lh,la); mc=self._monte_carlo(lh,la,simulations,seed=f"{event.get('id','')}:{round(lh,4)}:{round(la,4)}")
         gp=self._market_probs(grid); mp=self._market_probs(mc)
         ensemble={m:{k:round(0.65*v+0.35*mp.get(m,{}).get(k,v),6) for k,v in items.items()} for m,items in gp.items()}
+        dynamic_strength=self.dynamic_strength.evaluate(event,evidence)
+        competition_regime=self.competition_regime.evaluate(evidence.get("competition_matches") or [])
         empirical=self.empirical.run(event,evidence)
         if empirical.get("available"):
             hm=empirical.get("hybrid_markets") or {}
@@ -219,6 +225,7 @@ class UMIOSProbabilityEngine:
             candidates.append({"market":market,"selection":sel,"odds":row["odds"],"model_probability":round(p,4),"market_probability":round(row["market_probability"],4),"edge":round(edge,4),"expected_value":round(ev,4),"status":status,"suspicious_edge":suspicious})
         qualified=sorted((x for x in candidates if x["status"]=="QUALIFIED"),key=lambda x:(x["edge"],x["expected_value"]),reverse=True)
         return {"state":"QUALIFIED_PREDICTION" if qualified else "NO_BET","model":"UMIOS-MarketSpecific+Poisson+MonteCarlo+FormTrend","model_independence":"MC_IS_NOT_AN_INDEPENDENT_SOURCE","simulations":max(1000,int(simulations)),
-                "expected_goals":{"home":round(lh,3),"away":round(la,3)},"history":{"home_games":hh["games"],"away_games":aa["games"],"minimum_games":sample},"omega_empirical":empirical,"omega_model_stability":{"theoretical_vs_empirical_available":bool(empirical.get("available")),"empirical_weight":empirical.get("empirical_weight") if empirical.get("available") else None},
+                "expected_goals":{"home":round(lh,3),"away":round(la,3)},"history":{"home_games":hh["games"],"away_games":aa["games"],"minimum_games":sample},"omega_empirical":empirical,"omega_model_stability":{"theoretical_vs_empirical_available":bool(empirical.get("available")),"empirical_weight":empirical.get("empirical_weight") if empirical.get("available") else None,"empirical_influences_live_ensemble":bool(empirical.get("available"))},
+                "dynamic_strength":dynamic_strength,"competition_regime":competition_regime,
                 "form_trend":{"home":round(self._trend(hh),4),"away":round(self._trend(aa),4)},"probabilities":ensemble,"market_models":market_specific,
                 "market_observations":len(observed),"candidates":candidates,"selection":qualified[0] if qualified else None,"generated_at":time.time()}
