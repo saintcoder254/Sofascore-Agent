@@ -115,6 +115,8 @@ async def enrichment_loop():
                     bundle=await acquisition.acquire(eid)
                     event=bundle.get("event") or {}
                     if not event: continue
+                    event["data_trust"]=bundle.get("data_trust")
+                    event["verification"]=bundle.get("verification")
                     store.put(eid,bundle.get("retrieved_at",time.time()),adapter.payload_hash(event),event)
                     enriched+=1
                     if not AUTO_ANALYZE or passes >= AUTO_ANALYZE_MAX: continue
@@ -215,6 +217,11 @@ async def learning_leagues():
 async def learning_leagues_run():
     rows=store.predictions_with_outcomes()
     return {"agent":"OMEGA League Intelligence Engine","settled_samples":len(rows),"report":omega_leagues.rank(rows)}
+@app.get("/integrity/trust/{fixture_id}")
+async def integrity_trust(fixture_id:str):
+    row=store.get_current(fixture_id)
+    if not row: raise HTTPException(status_code=404,detail="fixture_not_found")
+    return {"fixture_id":fixture_id,"retrieved_at":row["retrieved_at"],"data_trust":(row["payload"] or {}).get("data_trust")}
 @app.get("/odds")
 async def odds_status():return odds.status()
 @app.get("/sources/scores24")
