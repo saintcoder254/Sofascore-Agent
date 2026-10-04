@@ -23,11 +23,12 @@ from calibration_pipeline import CalibrationPipeline
 from omega_promotion_gate import OmegaPromotionGate
 from oos_model_tournament import OOSModelTournament
 from league_intelligence_engine import LeagueIntelligenceEngine
+from case_database import CaseDatabaseManager
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger=logging.getLogger("emm.poller")
-POLL_SECONDS=int(os.getenv("POLL_SECONDS","60")); STALE_AFTER=int(os.getenv("STALE_AFTER_SECONDS","180")); BASE=os.getenv("SOFASCORE_BASE","https://www.sofascore.com/api/v1"); DB=os.getenv("DATABASE_PATH","matchmaster.db"); TIMEOUT=float(os.getenv("HTTP_TIMEOUT_SECONDS","15")); EVOLUTION_SECONDS=int(os.getenv("EVOLUTION_SECONDS","21600")); EVOLUTION_MIN_SAMPLES=int(os.getenv("EVOLUTION_MIN_SAMPLES","100")); RESEARCH_SECONDS=int(os.getenv("RESEARCH_SECONDS","21600")); LEARNING_SECONDS=int(os.getenv("LEARNING_SECONDS","300")); SOURCE_LEARNING_SECONDS=int(os.getenv("SOURCE_LEARNING_SECONDS","300")); SOURCE_MIN_SAMPLES=int(os.getenv("SOURCE_MIN_SAMPLES","100")); VERIFICATION_SECONDS=int(os.getenv("VERIFICATION_SECONDS","300")); VERIFICATION_MIN_SOURCES=int(os.getenv("VERIFICATION_MIN_SOURCES","2")); ENRICH_SECONDS=int(os.getenv("ENRICH_SECONDS","300")); ENRICH_MAX_FIXTURES=int(os.getenv("ENRICH_MAX_FIXTURES","8")); AUTO_ANALYZE=os.getenv("AUTO_ANALYZE","1")=="1"; AUTO_ANALYZE_MAX=int(os.getenv("AUTO_ANALYZE_MAX","8"))
-adapter=FeedFusionAdapter(BASE,TIMEOUT); store=Store(DB); fresh=FreshnessGate(STALE_AFTER); conflict=ConflictGate(); evolution=EvolutionAgent(store,EVOLUTION_MIN_SAMPLES); research=ResearchEngine(store); learning=ClosedLoopLearning(store,evolution); source_learning=SourceLearningAgent(store,SOURCE_MIN_SAMPLES); odds=OddsIntelligenceAgent(store); verifier=ResultVerifierAgent(); verification_learning=VerificationLearningAgent(store,verifier,VERIFICATION_MIN_SOURCES)
+POLL_SECONDS=int(os.getenv("POLL_SECONDS","60")); STALE_AFTER=int(os.getenv("STALE_AFTER_SECONDS","180")); BASE=os.getenv("SOFASCORE_BASE","https://www.sofascore.com/api/v1"); DB=os.getenv("DATABASE_PATH","matchmaster.db"); CASE_DB_DIR=os.getenv("CASE_DATABASE_DIR","case_databases"); TIMEOUT=float(os.getenv("HTTP_TIMEOUT_SECONDS","15")); EVOLUTION_SECONDS=int(os.getenv("EVOLUTION_SECONDS","21600")); EVOLUTION_MIN_SAMPLES=int(os.getenv("EVOLUTION_MIN_SAMPLES","100")); RESEARCH_SECONDS=int(os.getenv("RESEARCH_SECONDS","21600")); LEARNING_SECONDS=int(os.getenv("LEARNING_SECONDS","300")); SOURCE_LEARNING_SECONDS=int(os.getenv("SOURCE_LEARNING_SECONDS","300")); SOURCE_MIN_SAMPLES=int(os.getenv("SOURCE_MIN_SAMPLES","100")); VERIFICATION_SECONDS=int(os.getenv("VERIFICATION_SECONDS","300")); VERIFICATION_MIN_SOURCES=int(os.getenv("VERIFICATION_MIN_SOURCES","2")); ENRICH_SECONDS=int(os.getenv("ENRICH_SECONDS","300")); ENRICH_MAX_FIXTURES=int(os.getenv("ENRICH_MAX_FIXTURES","8")); AUTO_ANALYZE=os.getenv("AUTO_ANALYZE","1")=="1"; AUTO_ANALYZE_MAX=int(os.getenv("AUTO_ANALYZE_MAX","8"))
+adapter=FeedFusionAdapter(BASE,TIMEOUT); store=Store(DB); case_databases=CaseDatabaseManager(CASE_DB_DIR); fresh=FreshnessGate(STALE_AFTER); conflict=ConflictGate(); evolution=EvolutionAgent(store,EVOLUTION_MIN_SAMPLES); research=ResearchEngine(store); learning=ClosedLoopLearning(store,evolution); source_learning=SourceLearningAgent(store,SOURCE_MIN_SAMPLES); odds=OddsIntelligenceAgent(store); verifier=ResultVerifierAgent(); verification_learning=VerificationLearningAgent(store,verifier,VERIFICATION_MIN_SOURCES)
 acquisition=MatchAcquisitionEngine(adapter)
 qualifier=UMIOSQualifier(STALE_AFTER)
 core=UMIOSCoreEngine(odds)
@@ -51,7 +52,7 @@ async def poll_once():
         for event in events:
             eid=str(event.get("id",""))
             if not eid: continue
-            event["verification"]={**verification_bundle,"event_conflict":eid in conflict_ids}; prev=store.get_current(eid); conflict.compare(prev["payload"] if prev else None,event); store.put(eid,time.time(),adapter.payload_hash(event)); stored+=1
+            event["verification"]={**verification_bundle,"event_conflict":eid in conflict_ids}; prev=store.get_current(eid); conflict.compare(prev["payload"] if prev else None,event); store.put(eid,time.time(),adapter.payload_hash(event),event); case=case_databases.open(eid); case.record_observation("POLL","feed_fusion",source,event,status="RECEIVED"); case.record_trust(event["data_trust"]) if event.get("data_trust") else None; case.close(); stored+=1
         s24=verification_bundle.get("scores24",{}) or {}; s24_added=store.add_external_observations("scores24",s24.get("observations",[]),s24.get("retrieved_at")); duration=round((time.perf_counter()-started)*1000,1); state.update({"items":len(events),"last_poll_items":stored,"last_success":time.time(),"last_error":None,"last_poll_duration_ms":duration,"polls_success":state["polls_success"]+1,"consecutive_failures":0}); logger.info("POLL_SUCCESS source=%s events=%s stored=%s scores24=%s conflicts=%s verification_sources=%s duration_ms=%s",source,len(events),stored,s24_added,len(conflicts),len((verification_bundle.get("final_results") or {}).get("sources",[])),duration);return len(events)
     except Exception as exc:
         duration=round((time.perf_counter()-started)*1000,1);state.update({"last_error":repr(exc),"last_poll_duration_ms":duration,"polls_failed":state["polls_failed"]+1,"consecutive_failures":state["consecutive_failures"]+1});logger.error("POLL_FAILED number=%s error=%r",poll_no,exc);raise
@@ -118,6 +119,7 @@ async def enrichment_loop():
                     event["data_trust"]=bundle.get("data_trust")
                     event["verification"]=bundle.get("verification")
                     store.put(eid,bundle.get("retrieved_at",time.time()),adapter.payload_hash(event),event)
+                    case=case_databases.open(eid); case.record_observation("ACQUISITION","match_acquisition","sofascore",event,status="RECEIVED"); case.record_trust(bundle["data_trust"]) if bundle.get("data_trust") else None; case.close()
                     enriched+=1
                     if not AUTO_ANALYZE or passes >= AUTO_ANALYZE_MAX: continue
                     gate=qualifier.qualify(eid,bundle)
@@ -141,7 +143,7 @@ async def enrichment_loop():
 async def lifespan(app):
     tasks=[asyncio.create_task(x()) for x in (polling_loop,evolution_loop,research_loop,learning_loop,source_learning_loop,verification_loop,enrichment_loop)];yield
     for t in tasks:t.cancel()
-    await asyncio.gather(*tasks,return_exceptions=True);await adapter.close()
+    await asyncio.gather(*tasks,return_exceptions=True);await adapter.close();case_databases.close()
 app=FastAPI(title="Elite MatchMaster Feed Fusion Acquisition Agent",lifespan=lifespan)
 def telemetry_payload():
     now=time.time();age=None if state["last_success"] is None else round(now-state["last_success"],1);fresh_enough=state["last_success"] is not None and age<=STALE_AFTER
