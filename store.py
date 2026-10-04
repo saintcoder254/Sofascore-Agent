@@ -49,6 +49,16 @@ class Store:
     def global_audit_summary(self):
         r=self.db.execute('SELECT COUNT(*),MAX(created_at) FROM omega_global_audit').fetchone(); return {'events':r[0],'latest_at':r[1],'chain':self.verify_global_audit()}
 
+    def federate_case_events(self,case_id,events):
+        added=0
+        for event in events or []:
+            payload={'case_id':str(case_id),'case_sequence':event.get('sequence'),'case_event_type':event.get('event_type'),'case_payload_hash':event.get('payload_hash'),'case_chain_hash':event.get('chain_hash'),'payload':event.get('payload')}
+            eid=f"{case_id}:{event.get('sequence')}"
+            exists=self.db.execute("SELECT 1 FROM omega_global_audit WHERE event_type=? AND entity_id=? LIMIT 1",('CASE_EVENT',eid)).fetchone()
+            if exists: continue
+            self._append_global_audit('CASE_EVENT',eid,payload); added+=1
+        self.db.commit(); return added
+
     def add_prediction(self,prediction_id,fixture_id,market,predicted_probability,selection=None,odds=None,predicted_at=None,model_version='unknown',features=None):
         ts=predicted_at or time.time(); feats=dict(features or {})
         frozen=PredictionLedgerGuard().freeze({'prediction_id':prediction_id,'fixture_id':str(fixture_id),'market':market,'predicted_probability':float(predicted_probability),'selection':selection,'odds':None if odds is None else float(odds),'predicted_at':ts,'model_version':model_version,'features':feats})
