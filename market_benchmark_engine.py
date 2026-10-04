@@ -20,7 +20,7 @@ class MarketBenchmarkEngine:
             d=float(decision_odds); c=float(closing_odds)
             if d<=1 or c<=1:return None
             # Positive when the bettor obtained a better price than close.
-            return c/d-1.0
+            return d/c-1.0
         except (TypeError,ValueError):return None
 
     def evaluate(self,decision):
