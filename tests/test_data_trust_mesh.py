@@ -19,6 +19,10 @@ class TestDataTrustMesh(unittest.TestCase):
         out=DataTrustMesh().evaluate([obs("sofascore")])
         self.assertEqual(out["state"],"QUARANTINED")
         self.assertIn("CONSENSUS_BLOCK",out["hard_blocks"])
+    def test_stale_source_cannot_count_as_consensus(self):
+        out=DataTrustMesh(max_age_seconds=30).evaluate([obs("sofascore",age=5),obs("fotmob",age=60)])
+        self.assertEqual(out["state"],"QUARANTINED")
+        self.assertIn("CONSENSUS_BLOCK",out["hard_blocks"])
     def test_stale_data_is_quarantined(self):
         out=DataTrustMesh(max_age_seconds=30).evaluate([obs("sofascore",age=60),obs("fotmob",age=60)])
         self.assertEqual(out["state"],"QUARANTINED")
