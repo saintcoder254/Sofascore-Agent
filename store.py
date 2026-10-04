@@ -56,6 +56,7 @@ class Store:
         if existing and existing[0]!=frozen['record_hash']: raise ValueError('PREDICTION_ID_IMMUTABILITY_CONFLICT')
         self.db.execute('INSERT OR REPLACE INTO predictions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             (prediction_id,str(fixture_id),market,float(predicted_probability),selection,None if odds is None else float(odds),ts,None,None,model_version,json.dumps(feats,separators=(',',':')),frozen['frozen_at'],frozen['schema_version'],frozen['record_hash'],None,None,None))
+        self._append_global_audit('PREDICTION',prediction_id,{'fixture_id':str(fixture_id),'market':market,'selection':selection,'probability':float(predicted_probability),'odds':None if odds is None else float(odds),'model_version':model_version,'record_hash':frozen['record_hash']})
         self.db.commit()
     def record_outcome(self,prediction_id,outcome,outcome_at=None):
         ts=outcome_at or time.time(); self.db.execute('UPDATE predictions SET outcome=?,outcome_at=? WHERE prediction_id=?',(float(outcome),ts,prediction_id)); self._append_global_audit('OUTCOME',prediction_id,{'outcome':float(outcome),'outcome_at':ts}); self.db.commit()
