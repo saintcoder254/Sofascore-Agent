@@ -198,15 +198,9 @@ class UMIOSProbabilityEngine:
         dynamic_strength=self.dynamic_strength.evaluate(event,evidence)
         competition_regime=self.competition_regime.evaluate(evidence.get("competition_matches") or [])
         empirical=self.empirical.run(event,evidence)
-        if empirical.get("available"):
-            hm=empirical.get("hybrid_markets") or {}
-            for market,vals in hm.items():
-                if market in ensemble:
-                    for sel,p in vals.items():
-                        if sel in ensemble[market]:
-                            ensemble[market][sel]=round(0.55*ensemble[market][sel]+0.45*p,6)
-                else:
-                    ensemble[market]=dict(vals)
+        # Empirical engine remains diagnostic-only until distribution-level validation
+        # proves that venue resampling/rounding adds out-of-sample value.
+        empirical_live_weight=0.0
         market_specific=self.market_models.evaluate(event,evidence)
         # Specialized models take precedence for the markets they can support.
         specialized=market_specific.get("probabilities") or {}
@@ -225,7 +219,7 @@ class UMIOSProbabilityEngine:
             candidates.append({"market":market,"selection":sel,"odds":row["odds"],"model_probability":round(p,4),"market_probability":round(row["market_probability"],4),"edge":round(edge,4),"expected_value":round(ev,4),"status":status,"suspicious_edge":suspicious})
         qualified=sorted((x for x in candidates if x["status"]=="QUALIFIED"),key=lambda x:(x["edge"],x["expected_value"]),reverse=True)
         return {"state":"QUALIFIED_PREDICTION" if qualified else "NO_BET","model":"UMIOS-MarketSpecific+Poisson+MonteCarlo+FormTrend","model_independence":"MC_IS_NOT_AN_INDEPENDENT_SOURCE","simulations":max(1000,int(simulations)),
-                "expected_goals":{"home":round(lh,3),"away":round(la,3)},"history":{"home_games":hh["games"],"away_games":aa["games"],"minimum_games":sample},"omega_empirical":empirical,"omega_model_stability":{"theoretical_vs_empirical_available":bool(empirical.get("available")),"empirical_weight":empirical.get("empirical_weight") if empirical.get("available") else None,"empirical_influences_live_ensemble":bool(empirical.get("available"))},
+                "expected_goals":{"home":round(lh,3),"away":round(la,3)},"history":{"home_games":hh["games"],"away_games":aa["games"],"minimum_games":sample},"omega_empirical":empirical,"omega_model_stability":{"theoretical_vs_empirical_available":bool(empirical.get("available")),"empirical_weight":empirical.get("empirical_weight") if empirical.get("available") else None,"empirical_influences_live_ensemble":False,"empirical_quarantine_weight":empirical_live_weight},
                 "dynamic_strength":dynamic_strength,"competition_regime":competition_regime,
                 "form_trend":{"home":round(self._trend(hh),4),"away":round(self._trend(aa),4)},"probabilities":ensemble,"market_models":market_specific,
                 "market_observations":len(observed),"candidates":candidates,"selection":qualified[0] if qualified else None,"generated_at":time.time()}
