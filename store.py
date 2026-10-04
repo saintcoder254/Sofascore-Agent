@@ -12,6 +12,7 @@ class Store:
         self.db.execute('CREATE TABLE IF NOT EXISTS evolution_candidates(candidate_id TEXT PRIMARY KEY,created_at REAL NOT NULL,candidate_json TEXT NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS external_observations(id INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL,retrieved_at REAL NOT NULL,fixture_key TEXT NOT NULL,home TEXT,away TEXT,kickoff TEXT,market TEXT,selection TEXT,raw_json TEXT NOT NULL,outcome REAL,outcome_at REAL)')
         self.db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_external_dedupe ON external_observations(source,fixture_key,kickoff,market,selection)')
+        self.db.execute('CREATE TABLE IF NOT EXISTS omega_global_audit(sequence INTEGER PRIMARY KEY AUTOINCREMENT,created_at REAL NOT NULL,event_type TEXT NOT NULL,entity_id TEXT NOT NULL,payload_hash TEXT NOT NULL,parent_hash TEXT,chain_hash TEXT NOT NULL,payload_json TEXT NOT NULL)')
         self.db.commit()
     def _migrate_predictions(self):
         cols={r[1] for r in self.db.execute('PRAGMA table_info(predictions)').fetchall()}
@@ -24,13 +25,40 @@ class Store:
     def put(self,fixture_id,retrieved_at,payload_hash,payload):
         raw=json.dumps(payload,separators=(',',':')); self.db.execute('INSERT OR REPLACE INTO snapshots VALUES(?,?,?,?)',(str(fixture_id),retrieved_at,payload_hash,raw)); self.db.execute('INSERT OR REPLACE INTO current VALUES(?,?,?,?)',(str(fixture_id),retrieved_at,payload_hash,raw)); self.db.commit()
     def current(self): return [{'fixture_id':r[0],'retrieved_at':r[1],'payload_hash':r[2],'payload':json.loads(r[3])} for r in self.db.execute('SELECT fixture_id,retrieved_at,payload_hash,payload FROM current').fetchall()]
+    @staticmethod
+    def _audit_canonical(value): return json.dumps(value,sort_keys=True,separators=(',',':'),default=str)
+    @classmethod
+    def _audit_hash(cls,value):
+        import hashlib
+        return hashlib.sha256(cls._audit_canonical(value).encode()).hexdigest()
+    def _append_global_audit(self,event_type,entity_id,payload):
+        raw=self._audit_canonical(payload); ph=self._audit_hash(payload)
+        row=self.db.execute('SELECT chain_hash FROM omega_global_audit ORDER BY sequence DESC LIMIT 1').fetchone(); parent=row[0] if row else None
+        ch=self._audit_hash({'event_type':event_type,'entity_id':str(entity_id),'payload_hash':ph,'parent_hash':parent})
+        self.db.execute('INSERT INTO omega_global_audit(created_at,event_type,entity_id,payload_hash,parent_hash,chain_hash,payload_json) VALUES(?,?,?,?,?,?,?)',(time.time(),event_type,str(entity_id),ph,parent,ch,raw))
+    def verify_global_audit(self):
+        rows=self.db.execute('SELECT sequence,event_type,entity_id,payload_hash,parent_hash,chain_hash,payload_json FROM omega_global_audit ORDER BY sequence').fetchall(); parent=None; failures=[]
+        for seq,event_type,eid,ph,stored_parent,ch,payload_json in rows:
+            actual_ph=self._audit_hash(json.loads(payload_json))
+            actual_ch=self._audit_hash({'event_type':event_type,'entity_id':str(eid),'payload_hash':ph,'parent_hash':stored_parent})
+            if actual_ph!=ph: failures.append({'sequence':seq,'reason':'PAYLOAD_HASH_MISMATCH'})
+            if stored_parent!=parent: failures.append({'sequence':seq,'reason':'PARENT_HASH_MISMATCH'})
+            if actual_ch!=ch: failures.append({'sequence':seq,'reason':'CHAIN_HASH_MISMATCH'})
+            parent=ch
+        return {'valid':not failures,'events':len(rows),'failures':failures}
+    def global_audit_summary(self):
+        r=self.db.execute('SELECT COUNT(*),MAX(created_at) FROM omega_global_audit').fetchone(); return {'events':r[0],'latest_at':r[1],'chain':self.verify_global_audit()}
+
     def add_prediction(self,prediction_id,fixture_id,market,predicted_probability,selection=None,odds=None,predicted_at=None,model_version='unknown',features=None):
         ts=predicted_at or time.time(); feats=dict(features or {})
         frozen=PredictionLedgerGuard().freeze({'prediction_id':prediction_id,'fixture_id':str(fixture_id),'market':market,'predicted_probability':float(predicted_probability),'selection':selection,'odds':None if odds is None else float(odds),'predicted_at':ts,'model_version':model_version,'features':feats})
+        existing=self.db.execute('SELECT record_hash FROM predictions WHERE prediction_id=?',(prediction_id,)).fetchone()
+        if existing and existing[0]!=frozen['record_hash']: raise ValueError('PREDICTION_ID_IMMUTABILITY_CONFLICT')
         self.db.execute('INSERT OR REPLACE INTO predictions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             (prediction_id,str(fixture_id),market,float(predicted_probability),selection,None if odds is None else float(odds),ts,None,None,model_version,json.dumps(feats,separators=(',',':')),frozen['frozen_at'],frozen['schema_version'],frozen['record_hash'],None,None,None))
         self.db.commit()
-    def record_outcome(self,prediction_id,outcome,outcome_at=None): self.db.execute('UPDATE predictions SET outcome=?,outcome_at=? WHERE prediction_id=?',(float(outcome),outcome_at or time.time(),prediction_id)); self.db.commit()
+    def record_outcome(self,prediction_id,outcome,outcome_at=None):
+        ts=outcome_at or time.time(); self.db.execute('UPDATE predictions SET outcome=?,outcome_at=? WHERE prediction_id=?',(float(outcome),ts,prediction_id)); self._append_global_audit('OUTCOME',prediction_id,{'outcome':float(outcome),'outcome_at':ts}); self.db.commit()
     def predictions_with_outcomes(self):
         rows=self.db.execute('SELECT prediction_id,fixture_id,market,predicted_probability,selection,odds,predicted_at,outcome,outcome_at,model_version,features_json,frozen_at,schema_version,record_hash,closing_odds,closing_at,closing_source FROM predictions WHERE outcome IS NOT NULL').fetchall(); return [dict(prediction_id=r[0],fixture_id=r[1],market=r[2],predicted_probability=r[3],selection=r[4],odds=r[5],predicted_at=r[6],outcome=r[7],outcome_at=r[8],model_version=r[9],features=json.loads(r[10] or '{}'),frozen_at=r[11],schema_version=r[12],record_hash=r[13],closing_odds=r[14],closing_at=r[15],closing_source=r[16]) for r in rows]
     def pending_predictions(self):
