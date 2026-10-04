@@ -21,6 +21,7 @@ from titan_incident_audit import TitanIncidentAudit
 from omega_weight_engine import OmegaWeightEngine
 from calibration_pipeline import CalibrationPipeline
 from omega_promotion_gate import OmegaPromotionGate
+from oos_model_tournament import OOSModelTournament
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger=logging.getLogger("emm.poller")
@@ -176,6 +177,10 @@ async def record_closing_odds(prediction_id:str,item:ClosingOddsIn):
     except KeyError: raise HTTPException(404,"prediction not found")
     except ValueError as exc: raise HTTPException(409,str(exc))
     return {"ok":True,"prediction_id":prediction_id,"closing_odds":item.closing_odds,"closing_at":item.closing_at or time.time(),"closing_source":item.closing_source}
+@app.get("/learning/omega/oos")
+async def omega_oos():
+    return OOSModelTournament(min_train=int(os.getenv("OMEGA_OOS_MIN_TRAIN","50")),min_test=int(os.getenv("OMEGA_OOS_MIN_TEST","20"))).run(store.oos_tournament_ledger())
+
 @app.get("/learning/omega")
 async def omega_learning_status():
     ledger=store.calibration_ledger()
