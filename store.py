@@ -53,13 +53,20 @@ class Store:
         ts=predicted_at or time.time(); feats=dict(features or {})
         frozen=PredictionLedgerGuard().freeze({'prediction_id':prediction_id,'fixture_id':str(fixture_id),'market':market,'predicted_probability':float(predicted_probability),'selection':selection,'odds':None if odds is None else float(odds),'predicted_at':ts,'model_version':model_version,'features':feats})
         existing=self.db.execute('SELECT record_hash FROM predictions WHERE prediction_id=?',(prediction_id,)).fetchone()
-        if existing and existing[0]!=frozen['record_hash']: raise ValueError('PREDICTION_ID_IMMUTABILITY_CONFLICT')
-        self.db.execute('INSERT OR REPLACE INTO predictions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        if existing:
+            if existing[0]!=frozen['record_hash']: raise ValueError('PREDICTION_ID_IMMUTABILITY_CONFLICT')
+            return
+        self.db.execute('INSERT INTO predictions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             (prediction_id,str(fixture_id),market,float(predicted_probability),selection,None if odds is None else float(odds),ts,None,None,model_version,json.dumps(feats,separators=(',',':')),frozen['frozen_at'],frozen['schema_version'],frozen['record_hash'],None,None,None))
         self._append_global_audit('PREDICTION',prediction_id,{'fixture_id':str(fixture_id),'market':market,'selection':selection,'probability':float(predicted_probability),'odds':None if odds is None else float(odds),'model_version':model_version,'record_hash':frozen['record_hash']})
         self.db.commit()
     def record_outcome(self,prediction_id,outcome,outcome_at=None):
-        ts=outcome_at or time.time(); self.db.execute('UPDATE predictions SET outcome=?,outcome_at=? WHERE prediction_id=?',(float(outcome),ts,prediction_id)); self._append_global_audit('OUTCOME',prediction_id,{'outcome':float(outcome),'outcome_at':ts}); self.db.commit()
+        ts=outcome_at or time.time(); row=self.db.execute('SELECT outcome FROM predictions WHERE prediction_id=?',(prediction_id,)).fetchone()
+        if not row: raise KeyError(prediction_id)
+        if row[0] is not None:
+            if float(row[0])!=float(outcome): raise ValueError('OUTCOME_IMMUTABILITY_CONFLICT')
+            return
+        self.db.execute('UPDATE predictions SET outcome=?,outcome_at=? WHERE prediction_id=?',(float(outcome),ts,prediction_id)); self._append_global_audit('OUTCOME',prediction_id,{'outcome':float(outcome),'outcome_at':ts}); self.db.commit()
     def predictions_with_outcomes(self):
         rows=self.db.execute('SELECT prediction_id,fixture_id,market,predicted_probability,selection,odds,predicted_at,outcome,outcome_at,model_version,features_json,frozen_at,schema_version,record_hash,closing_odds,closing_at,closing_source FROM predictions WHERE outcome IS NOT NULL').fetchall(); return [dict(prediction_id=r[0],fixture_id=r[1],market=r[2],predicted_probability=r[3],selection=r[4],odds=r[5],predicted_at=r[6],outcome=r[7],outcome_at=r[8],model_version=r[9],features=json.loads(r[10] or '{}'),frozen_at=r[11],schema_version=r[12],record_hash=r[13],closing_odds=r[14],closing_at=r[15],closing_source=r[16]) for r in rows]
     def pending_predictions(self):
