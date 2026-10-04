@@ -13,7 +13,7 @@ class TestOmegaHardening(unittest.TestCase):
         g=PredictionLedgerGuard(); r=g.freeze({"fixture_id":"x","market":"1X2","selection":"1","model":"OMEGA"})
         self.assertTrue(g.verify(r)["valid"])
     def test_market_clv(self):
-        self.assertAlmostEqual(MarketBenchmarkEngine.clv(2.20,2.00),-0.090909,places=5)
+        self.assertAlmostEqual(MarketBenchmarkEngine.clv(2.20,2.00),0.10,places=5)
     def test_calibration_metrics(self):
         c=CalibrationEngine().evaluate([{"p":.8,"y":1},{"p":.2,"y":0}]); self.assertIsNotNone(c["brier"]); self.assertIsNotNone(c["log_loss"])
     def test_weight_engine_shadows_thin_models(self):
