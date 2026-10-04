@@ -196,8 +196,8 @@ class DataTrustMesh:
         envelope={"version":self.VERSION,"state":state,"hard_blocks":hard,
                   "canonical":reports["synthesis"].get("canonical",{}),
                   "consensus":reports["consensus"],"reports":reports,
-                  "provenance":[{"source":o.get("source"),"retrieved_at":o.get("retrieved_at"),
-                                 "payload_hash":v["payload_hash"]} for o,v in zip(bundle["observations"],valid)],
+                  "provenance":[{"source":v.get("source"),"retrieved_at":v.get("retrieved_at"),
+                                 "payload_hash":v["payload_hash"]} for v in valid],
                   "evaluated_at":context["now"]}
         envelope["envelope_hash"]=hashlib.sha256(json.dumps(envelope,sort_keys=True,separators=(",",":"),default=str).encode()).hexdigest()
         return envelope
