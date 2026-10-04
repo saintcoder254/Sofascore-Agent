@@ -185,7 +185,13 @@ class DataTrustMesh:
     def evaluate(self,observations,context=None):
         context=dict(context or {}); context.setdefault("now",time.time())
         bundle={"observations":list(observations or [])}; reports={}
-        for agent in self.agents: reports[agent.name]=agent.run(bundle,context)
+        for agent in self.agents:
+            if agent.name in {"conflict","consensus","synthesis"} and reports.get("freshness"):
+                eligible=set(reports["freshness"].get("fresh_sources",[]))
+                scoped={"observations":[o for o in bundle["observations"] if o.get("source") in eligible]}
+                reports[agent.name]=agent.run(scoped,context)
+            else:
+                reports[agent.name]=agent.run(bundle,context)
         hard=[]
         for name in ("provenance","freshness","completeness","conflict","anomaly"):
             if reports[name]["state"]=="BLOCK": hard.append(name.upper()+"_BLOCK")
