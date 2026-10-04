@@ -71,7 +71,7 @@ class CompletenessAgent(TrustAgent):
 
 class ConflictAgent(TrustAgent):
     name = "conflict"
-    CRITICAL = ("home", "away", "kickoff", "status", "home_score", "away_score")
+    CRITICAL = ("home", "away", "status", "home_score", "away_score")
     def _value(self, payload, field):
         event = payload or {}
         if field == "home": return (event.get("homeTeam") or {}).get("name")
@@ -172,8 +172,9 @@ class SynthesisAgent(TrustAgent):
             for src,v in vals: groups[str(v).strip().lower()].append((src,v))
             if len(groups)==1: fields[field]=vals[0][1]
             else: conflicts.append({"field":field,"values":{k:[x[0] for x in v] for k,v in groups.items()}})
-        state="PASS" if fields and not conflicts else ("BLOCK" if conflicts else "CAUTION")
-        return {"state":state,"canonical":fields,"conflicts":conflicts}
+        hard_conflicts=[x for x in conflicts if x.get("field")!="kickoff"]
+        state="PASS" if fields and not hard_conflicts else ("BLOCK" if hard_conflicts else "CAUTION")
+        return {"state":state,"canonical":fields,"conflicts":conflicts,"hard_conflicts":hard_conflicts}
 
 class DataTrustMesh:
     VERSION="OMEGA-DATA-TRUST-MESH-v1"
