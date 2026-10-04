@@ -190,6 +190,7 @@ class UMIOSProbabilityEngine:
         lh=max(0.15,min(4.5,lh)); la=max(0.15,min(4.5,la))
         grid=self._grid(lh,la); mc=self._monte_carlo(lh,la,simulations,seed=f"{event.get('id','')}:{round(lh,4)}:{round(la,4)}")
         gp=self._market_probs(grid); mp=self._market_probs(mc)
+        ensemble={m:{k:round(0.65*v+0.35*mp.get(m,{}).get(k,v),6) for k,v in items.items()} for m,items in gp.items()}
         empirical=self.empirical.run(event,evidence)
         if empirical.get("available"):
             hm=empirical.get("hybrid_markets") or {}
@@ -200,7 +201,6 @@ class UMIOSProbabilityEngine:
                             ensemble[market][sel]=round(0.55*ensemble[market][sel]+0.45*p,6)
                 else:
                     ensemble[market]=dict(vals)
-        ensemble={m:{k:round(0.65*v+0.35*mp.get(m,{}).get(k,v),6) for k,v in items.items()} for m,items in gp.items()}
         market_specific=self.market_models.evaluate(event,evidence)
         # Specialized models take precedence for the markets they can support.
         specialized=market_specific.get("probabilities") or {}
