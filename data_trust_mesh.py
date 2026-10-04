@@ -119,8 +119,20 @@ class ConsensusAgent(TrustAgent):
                        "source_count":len(result_sources[k])} for k,v in votes.items()]
         candidates.sort(key=lambda x:(-x["source_count"],-x["weighted_support"],x["result"]))
         winner = candidates[0] if candidates else None
-        state = "PASS" if winner and winner["source_count"] >= self.minimum else "BLOCK"
-        return {"state":state,"required_sources":self.minimum,"available_sources":sorted(sources),
+        if winner:
+            state = "PASS" if winner["source_count"] >= self.minimum else "BLOCK"
+            mode = "RESULT_CONSENSUS"
+        else:
+            identities=set()
+            for o in bundle.get("observations") or []:
+                p=o.get("payload") or {}
+                h=(p.get("homeTeam") or {}).get("name")
+                a=(p.get("awayTeam") or {}).get("name")
+                if h and a:
+                    identities.add((str(h).strip().lower(),str(a).strip().lower()))
+            state = "PASS" if len(identities)==1 and len(sources) >= self.minimum else "BLOCK"
+            mode = "IDENTITY_CONSENSUS"
+        return {"state":state,"mode":mode,"required_sources":self.minimum,"available_sources":sorted(sources),
                 "candidates":candidates,"winner":winner}
 
 class AnomalyAgent(TrustAgent):
