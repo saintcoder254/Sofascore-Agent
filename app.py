@@ -38,6 +38,7 @@ class PredictionIn(BaseModel):
     prediction_id:str=Field(default_factory=lambda:str(uuid.uuid4())); fixture_id:str; market:str; predicted_probability:float=Field(ge=0,le=1); selection:str|None=None; odds:float|None=Field(default=None,gt=1); model_version:str="unknown"; features:dict=Field(default_factory=dict)
 class PredictionBatchIn(BaseModel): predictions:list[PredictionIn]=Field(min_length=1,max_length=500)
 class OutcomeIn(BaseModel): outcome:float=Field(ge=0,le=1)
+class ClosingOddsIn(BaseModel): closing_odds:float=Field(gt=1); closing_at:float|None=None; closing_source:str|None=None
 async def poll_once():
     started=time.perf_counter(); state["last_poll"]=time.time(); state["polls_total"]+=1; poll_no=state["polls_total"]
     try:
@@ -167,10 +168,16 @@ async def record_umios_predictions(item:PredictionBatchIn):
     return {"ok":True,"source":"umios","recorded":len(item.predictions),"prediction_ids":[p.prediction_id for p in item.predictions]}
 @app.post("/predictions/{prediction_id}/outcome")
 async def record_outcome(prediction_id:str,item:OutcomeIn):store.record_outcome(prediction_id,item.outcome);return {"ok":True,"prediction_id":prediction_id,"outcome":item.outcome}
+@app.post("/predictions/{prediction_id}/closing-odds")
+async def record_closing_odds(prediction_id:str,item:ClosingOddsIn):
+    try: store.record_closing_odds(prediction_id,item.closing_odds,item.closing_at,item.closing_source)
+    except KeyError: raise HTTPException(404,"prediction not found")
+    except ValueError as exc: raise HTTPException(409,str(exc))
+    return {"ok":True,"prediction_id":prediction_id,"closing_odds":item.closing_odds,"closing_at":item.closing_at or time.time(),"closing_source":item.closing_source}
 @app.get("/learning/omega")
 async def omega_learning_status():
     ledger=store.calibration_ledger()
-    return {"agent":"OMEGA Calibration + Evidence-Earned Weight Engine","ledger_samples":len(ledger),"ledger_integrity":store.verify_prediction_ledger(),"calibration":omega_calibration.run(ledger),"weights":omega_weights.evaluate(ledger),"live_reweighting_enabled":False}
+    return {"agent":"OMEGA Calibration + Evidence-Earned Weight Engine","ledger_samples":len(ledger),"ledger_integrity":store.verify_prediction_ledger(),"calibration":omega_calibration.run(ledger),"weights":omega_weights.evaluate(ledger),"market_benchmark":store.market_benchmark_report(),"live_reweighting_enabled":False}
 
 @app.post("/learning/omega/run")
 async def omega_learning_run():
