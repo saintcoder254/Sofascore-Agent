@@ -54,6 +54,13 @@ class Store:
         if float(ts) < float(row[0]): raise ValueError("CLOSING_TIME_BEFORE_DECISION")
         self.db.execute('UPDATE predictions SET closing_odds=?,closing_at=?,closing_source=? WHERE prediction_id=?',(float(closing_odds),ts,closing_source,prediction_id)); self.db.commit()
 
+    def oos_tournament_ledger(self):
+        from collections import defaultdict
+        groups=defaultdict(list)
+        for r in self.calibration_ledger():
+            groups[str(r.get("model") or "unknown")].append(r)
+        return dict(groups)
+
     def market_benchmark_ledger(self):
         from market_benchmark_engine import MarketBenchmarkEngine
         engine=MarketBenchmarkEngine()
