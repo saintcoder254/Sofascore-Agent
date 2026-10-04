@@ -6,6 +6,7 @@ from sofascore_adapter import SofaScoreAdapter
 from fotmob_adapter import FotMobAdapter
 from futbol24_adapter import Futbol24Adapter
 from scores24_adapter import Scores24Adapter
+from data_trust_mesh import DataTrustMesh
 
 logger = logging.getLogger("emm.fusion")
 
@@ -18,6 +19,7 @@ class FeedFusionAdapter:
         self.fotmob=FotMobAdapter(timeout)
         self.futbol24=Futbol24Adapter(timeout)
         self.scores24=Scores24Adapter(timeout)
+        self.trust_mesh=DataTrustMesh(max_age_seconds=180, min_independent_sources=2)
         self.timeout=timeout
         self.fallback_client=httpx.AsyncClient(timeout=timeout,headers={"Accept":"application/json","User-Agent":"EliteMatchMaster/1.0 feed-fusion"})
         self.active_source=None
@@ -112,6 +114,19 @@ class FeedFusionAdapter:
         final_verification=await self.verify_final_results(verification)
         payload["verification"]={"futbol24":verification,"scores24":scores24,"final_results":final_verification}
         payload["verification_conflicts"]=self.reconcile_scores(payload,verification)
+        # Build a per-fixture trust envelope from independent final-result witnesses.
+        witnesses=final_verification.get("sources",[]) if isinstance(final_verification,dict) else []
+        for event in payload.get("events",[]):
+            eh=self._team_key(event.get("homeTeam")); ea=self._team_key(event.get("awayTeam"))
+            observations=[{"source":str(payload.get("source") or self.active_source or "unknown"),
+                           "retrieved_at":payload.get("retrieved_at",time.time()),"payload":event}]
+            for wp in witnesses:
+                source=str(wp.get("source") or "")
+                for we in wp.get("events",[]) or []:
+                    wh=self._team_key(we.get("homeTeam")); wa=self._team_key(we.get("awayTeam"))
+                    if wh==eh and wa==ea:
+                        observations.append({"source":source,"retrieved_at":wp.get("retrieved_at",time.time()),"payload":we})
+            event["data_trust"]=self.trust_mesh.evaluate(observations,{"now":time.time()})
         return payload
     def payload_hash(self,payload): return self.primary.payload_hash(payload)
     async def close(self): await self.primary.close(); await self.fotmob.close(); await self.futbol24.close(); await self.scores24.close(); await self.fallback_client.aclose()
