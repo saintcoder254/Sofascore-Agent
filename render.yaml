@@ -16,6 +16,8 @@ services:
         value: "180"
       - key: DATABASE_PATH
         value: "/data/matchmaster.db"
+      - key: CASE_DATABASE_DIR
+        value: "/data/case_databases"
       - key: HTTP_TIMEOUT_SECONDS
         value: "15"
       - key: EVOLUTION_SECONDS
