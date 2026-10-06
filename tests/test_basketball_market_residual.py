@@ -26,3 +26,26 @@ def test_market_gate_can_promote_totals_independently():
         samples=1000; brier=.20; log_loss=.59; margin_mae=10; total_mae=14; clv_samples=0; clv_mean=0; chronological=True
     d=MarketPromotionGate(require_clv=False).evaluate("totals",M(),C())
     assert d.eligible
+
+
+def test_clv_rejects_close_before_cutoff():
+    class R:
+        entry_spread=-4.0
+        closing_spread=-5.0
+        cutoff_at=100.0
+        closing_at=99.0
+        event_at=120.0
+        clv_side_spread="home"
+    e=verify_clv([R()]*300,min_samples=250)
+    assert e.status=="UNVERIFIED"
+    assert e.samples==0
+
+def test_clv_requires_positive_confidence_bound_for_promotion():
+    class M:
+        samples=300; brier=.20; log_loss=.59; margin_mae=9; total_mae=15
+    class C:
+        samples=300; brier=.20; log_loss=.59; margin_mae=9; total_mae=14
+        clv_samples=300; clv_mean=.01; clv_lower_ci=-.01
+    d=MarketPromotionGate(require_clv=True).evaluate_totals(M(),C())
+    assert not d.eligible
+    assert "clv_ci_not_positive" in d.reasons
