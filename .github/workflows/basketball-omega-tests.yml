@@ -1,15 +1,67 @@
-name: Basketball OMEGA tests
+name: Basketball OMEGA CI Swarm
+
 on:
   push:
-    paths: ["basketball_omega/**", "tests/test_basketball_*.py"]
+    branches: ["feature/basketball-omega-fusion-v1"]
+    paths:
+      - "basketball_omega/**"
+      - "tests/test_basketball_*.py"
+      - ".github/workflows/basketball-omega-tests.yml"
   pull_request:
-    paths: ["basketball_omega/**", "tests/test_basketball_*.py"]
+    paths:
+      - "basketball_omega/**"
+      - "tests/test_basketball_*.py"
+      - ".github/workflows/basketball-omega-tests.yml"
+
+permissions:
+  contents: read
+
 jobs:
-  test:
+  swarm:
+    name: OMEGA CI Swarm
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        bot: [static, boundary, contracts, tests]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run ${{ matrix.bot }} bot
+        run: |
+          python - <<'PY'
+          from basketball_omega.ci_swarm import StaticBot, BoundaryBot, ContractBot, TestBot
+          bots = {"static": StaticBot, "boundary": BoundaryBot, "contracts": ContractBot, "tests": TestBot}
+          result = bots["${{ matrix.bot }}"]().run()
+          print(result)
+          if not result.passed:
+              raise SystemExit(1)
+          PY
+
+  gate:
+    name: OMEGA Swarm Gate
+    needs: swarm
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every bot to pass
+        env:
+          RESULT: ${{ needs.swarm.result }}
+        run: |
+          echo "swarm_result=$RESULT"
+          test "$RESULT" = "success"
+
+  full-regression:
+    name: Basketball full regression
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: python -m unittest discover -s tests -p 'test_basketball_*.py' -v
+      - name: Run all basketball tests
+        run: python -m unittest discover -s tests -p 'test_basketball_*.py' -v
