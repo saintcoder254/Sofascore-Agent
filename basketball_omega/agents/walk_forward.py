@@ -16,6 +16,7 @@ class WalkForwardRow:
     actual_total: float
     entry_spread: float | None = None
     closing_spread: float | None = None
+    closing_at: float | None = None
 
 class BasketballWalkForwardTrainer:
     """Expanding-window OOS evaluator. No row after cutoff may enter training."""
@@ -94,6 +95,8 @@ class BasketballWalkForwardTrainer:
             p,m,t=self._predict(ex,adjusted)
             market=ex.features.get("markets",[])
             entry=next((float(x["line"]) for x in market if x.get("market")=="spread" and x.get("is_opening")),None)
-            close=next((float(x["line"]) for x in market if x.get("market")=="spread" and x.get("is_closing")),None)
-            out.append(WalkForwardRow(ex.fixture_id,ex.cutoff_at,p,m,t,ex.target_home_win,ex.target_margin,ex.target_total,entry,close))
+            close_item=next((x for x in market if x.get("market")=="spread" and x.get("is_closing")),None)
+            close=float(close_item["line"]) if close_item is not None else None
+            close_at=float(close_item["timestamp"]) if close_item is not None and close_item.get("timestamp") is not None else None
+            out.append(WalkForwardRow(ex.fixture_id,ex.cutoff_at,p,m,t,ex.target_home_win,ex.target_margin,ex.target_total,entry,close,close_at))
         return out
