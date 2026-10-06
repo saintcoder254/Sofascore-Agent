@@ -9,8 +9,8 @@ from calibration_engine import CalibrationEngine
 class OOSModelTournament:
     VERSION="OMEGA-OOS-TOURNAMENT-v3"
 
-    def __init__(self,min_train=50,min_test=20):
-        self.min_train=max(20,int(min_train)); self.min_test=max(10,int(min_test))
+    def __init__(self,min_train=175,min_test=250):
+        self.min_train=max(175,int(min_train)); self.min_test=max(250,int(min_test))
         self.cal=CalibrationEngine()
 
     @staticmethod
