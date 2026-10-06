@@ -7,4 +7,6 @@ from .market import MarketResidualAgent
 from .simulator import PossessionSimulatorAgent
 from .calibration import CalibrationAgent
 from .adversarial import AdversarialAgent
+from .regime import RegimeAgent
+from .clv import CLVAgent
 from .arbiter import BasketballFinalArbiter
