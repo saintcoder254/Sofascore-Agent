@@ -14,7 +14,8 @@ class SourceReconciliationAgent:
         groups=defaultdict(list)
         for r in records:
             # Same entity/effective time is the canonical reconciliation key.
-            groups[(r.entity_type,r.entity_id,r.effective_at)].append(r)
+            group_key=(r.entity_type,r.entity_id, r.values.get("game_time") if r.entity_type=="game" else r.effective_at)
+            groups[group_key].append(r)
         chosen=[]; issues=[]
         for key, rows in groups.items():
             if len(rows)==1:
