@@ -34,6 +34,19 @@ class BasketballIngestionEngine:
                         issues.append(IngestionIssue("error","NEGATIVE_MINUTES",r.source,r.record_key,"negative minutes"))
                 except (TypeError,ValueError):
                     issues.append(IngestionIssue("error","INVALID_MINUTES",r.source,r.record_key,"minutes is not numeric"))
+        # Raw cross-source conflicts are identified before any source is discarded.
+        groups={}
+        for r in raw_records:
+            v=dict(r.payload or {})
+            key=(str(v.get("entity_type","")),str(v.get("entity_id",v.get("game_id",""))),float(v.get("effective_at",r.observed_at)))
+            if key[0] and key[1]:
+                groups.setdefault(key,[]).append(r)
+        for key, rows in groups.items():
+            if len(rows)>1:
+                payloads=[dict(x.payload or {}) for x in rows]
+                if any(p != payloads[0] for p in payloads[1:]):
+                    issues.append(IngestionIssue("warning","SOURCE_CONFLICT",rows[0].source,rows[0].record_key,
+                        "independent raw sources disagree"))
         return issues
 
     def ingest(self, raw_records):
