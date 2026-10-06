@@ -11,3 +11,6 @@ from .regime import RegimeAgent
 from .clv import CLVAgent
 from .online_learner import OnlineWeightLearner
 from .arbiter import BasketballFinalArbiter
+
+from basketball_omega.agents.opponent_adjustment import OpponentTeammateAdjustmentAgent
+from basketball_omega.agents.walk_forward import BasketballWalkForwardTrainer, WalkForwardRow
