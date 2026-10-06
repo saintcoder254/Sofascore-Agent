@@ -2,13 +2,12 @@
 
 This layer converts point-in-time player states, expected-minute distributions,
 replacement chains, and five-man interaction estimates into an explicit team
-impact signal. It is deliberately transparent and uncertainty-aware.
-
-The output is an adjustment signal, not a replacement for the possession
-model. Keeping the two signals separate reduces accidental double counting.
+impact signal. It is an independent player/rotation view; the possession model
+remains the primary team-level baseline.
 """
 from dataclasses import dataclass
 import math
+from basketball_omega.contracts import AgentOpinion
 
 
 @dataclass(frozen=True)
@@ -47,6 +46,7 @@ class PlayerTeamImpactAgent:
             minutes += mean_minutes
 
         strength = weighted / minutes if minutes > 0 else 0.0
+
         interaction_total = 0.0
         interaction_var = 0.0
         for row in interactions:
@@ -56,14 +56,15 @@ class PlayerTeamImpactAgent:
             u = float(row.get("uncertainty", 0.0) or 0.0)
             interaction_var += u * u
 
-        # A five-man interaction is an additive lineup effect. Cap the raw
-        # contribution so sparse estimates cannot dominate team strength.
+        # Sparse lineup estimates are additive but capped so they cannot
+        # overwhelm the independently estimated player strength.
         interaction_adjustment = max(-5.0, min(5.0, interaction_total))
         strength += interaction_adjustment
+
         uncertainty = math.sqrt(max(0.0, variance + interaction_var))
         if replacement > 0:
-            # Missing minutes increase uncertainty rather than imposing an
-            # arbitrary fixed penalty; the replacement chain owns the effect.
+            # Missing minutes widen uncertainty; replacement effects are
+            # handled through the explicit replacement chain.
             uncertainty += replacement * 0.08
 
         return TeamImpactEstimate(
@@ -94,9 +95,31 @@ class PlayerTeamImpactAgent:
         margin = (h.strength - a.strength) * pace / 100.0
         uncertainty = math.sqrt(h.uncertainty ** 2 + a.uncertainty ** 2)
         confidence = max(0.20, min(0.92, 0.80 - uncertainty / 40.0))
-        return {
-            "estimates": estimates,
-            "fair_margin": margin,
-            "uncertainty": uncertainty,
-            "confidence": confidence,
-        }
+        return AgentOpinion(
+            self.name,
+            "PLAYER_TEAM_EDGE",
+            confidence,
+            fair_margin=margin,
+            rationale=[
+                "Player impact is weighted by expected available minutes.",
+                "Availability uncertainty widens the estimate instead of applying a fixed injury penalty.",
+                "Sparse five-man interactions are shrunk and capped before entering team strength.",
+            ],
+            risks=[
+                "This is a transparent state-estimation layer, not a trained RAPM/EPM replacement.",
+            ],
+            evidence={
+                "team_estimates": {
+                    team: {
+                        "strength": e.strength,
+                        "uncertainty": e.uncertainty,
+                        "expected_minutes": e.expected_minutes,
+                        "replacement_minutes": e.replacement_minutes,
+                        "interaction_adjustment": e.interaction_adjustment,
+                    }
+                    for team, e in estimates.items()
+                },
+                "pace": pace,
+                "uncertainty": uncertainty,
+            },
+        )
