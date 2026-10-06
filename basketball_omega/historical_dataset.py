@@ -53,6 +53,7 @@ class BasketballPITDatasetBuilder:
         }
         players = {
             pid: {
+                "player_id": pid,
                 "team_id": p.team_id,
                 "stats": dict(p.stats),
                 "status": p.status,
