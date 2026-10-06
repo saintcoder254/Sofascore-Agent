@@ -89,9 +89,7 @@ def build_examples(db):
 def baseline_report(rows):
     from basketball_omega.evaluation import EvaluationReport
     import math
-    rows=[r for r in rows if any(x.get("market")=="spread" and x.get("is_opening") for x in getattr(r,"_market",[]))]
-    # Fallback to the actual OOS rows; their entry_spread is the PIT market state.
-    rows=rows if rows else rows
+    rows=[r for r in rows if r.entry_spread is not None]
     if not rows:
         return EvaluationReport(0,math.inf,math.inf,math.inf,math.inf,math.inf,0,0,10,True)
     def market_prob(r):
