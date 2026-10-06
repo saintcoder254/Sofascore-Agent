@@ -66,8 +66,20 @@ class BasketballWalkForwardTrainer:
                 w=max(1.0, float(x.get("possessions", x.get("expected_minutes", 0)) or 0))
                 weighted.append(float(x.get("net_rating", 0.0))*w); weights.append(w)
             return sum(weighted)/sum(weights) if weights else 0.0
-        margin=base_margin+p_h-p_a+0.20*(lineup_signal(lineup_h)-lineup_signal(lineup_a))
-        total=pace*(h_off+a_off+h_def+a_def)/440.0*200.0
+        model_margin=base_margin+p_h-p_a+0.20*(lineup_signal(lineup_h)-lineup_signal(lineup_a))
+        # Opening spread is prediction-time market information, not an outcome.
+        # Use it as a controlled prior while preserving the independent model signal.
+        opening_spread=next((float(x["line"]) for x in ex.features.get("markets",[])
+                             if x.get("market")=="spread" and x.get("is_opening")),None)
+        if opening_spread is not None:
+            market_margin=-opening_spread
+            margin=0.35*model_margin+0.65*market_margin
+        else:
+            margin=model_margin
+        # Points = possessions * (home expected points/100 + away expected points/100).
+        home_eff=(h_off+a_def)/2.0
+        away_eff=(a_off+h_def)/2.0
+        total=pace*(home_eff+away_eff)/100.0
         prob=self._sigmoid(margin/7.0)
         return prob, margin, total
 
