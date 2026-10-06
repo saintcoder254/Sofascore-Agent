@@ -13,7 +13,7 @@ class IngestionQualityAgent:
                 issues.append(IngestionIssue("warning","DUPLICATE_RECORD",r.source,r.entity_id,"duplicate canonical observation"))
             seen.add(key)
             if r.effective_at > r.captured_at:
-                issues.append(IngestionIssue("error","TIME_TRAVEL","r.source",r.entity_id,"effective time after capture"))
+                issues.append(IngestionIssue("error","TIME_TRAVEL",r.source,r.entity_id,"effective time after capture"))
             games[r.game_id].append(r)
             v=r.values
             if r.entity_type=="game":
