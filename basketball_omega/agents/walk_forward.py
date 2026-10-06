@@ -17,6 +17,12 @@ class WalkForwardRow:
     entry_spread: float | None = None
     closing_spread: float | None = None
     closing_at: float | None = None
+    entry_total: float | None = None
+    closing_total: float | None = None
+    closing_total_at: float | None = None
+    event_at: float | None = None
+    clv_side_spread: str | None = None
+    clv_side_total: str | None = None
 
 class BasketballWalkForwardTrainer:
     """Expanding-window OOS evaluator. No row after cutoff may enter training."""
@@ -80,7 +86,9 @@ class BasketballWalkForwardTrainer:
         # Points = possessions * (home expected points/100 + away expected points/100).
         home_eff=(h_off+a_def)/2.0
         away_eff=(a_off+h_def)/2.0
-        total=pace*(home_eff+away_eff)/100.0
+        model_total=pace*(home_eff+away_eff)/100.0
+        opening_total=next((float(x['line']) for x in ex.features.get('markets',[]) if x.get('market')=='total' and x.get('is_opening')),None)
+        total=0.35*model_total+0.65*opening_total if opening_total is not None else model_total
         prob=self._sigmoid(margin/7.0)
         return prob, margin, total
 
@@ -98,5 +106,12 @@ class BasketballWalkForwardTrainer:
             close_item=next((x for x in market if x.get("market")=="spread" and x.get("is_closing")),None)
             close=float(close_item["line"]) if close_item is not None else None
             close_at=float(close_item["timestamp"]) if close_item is not None and close_item.get("timestamp") is not None else None
-            out.append(WalkForwardRow(ex.fixture_id,ex.cutoff_at,p,m,t,ex.target_home_win,ex.target_margin,ex.target_total,entry,close,close_at))
+            total_open_item=next((x for x in market if x.get("market")=="total" and x.get("is_opening")),None)
+            total_close_item=next((x for x in market if x.get("market")=="total" and x.get("is_closing")),None)
+            total_entry=float(total_open_item["line"]) if total_open_item is not None else None
+            total_close=float(total_close_item["line"]) if total_close_item is not None else None
+            total_close_at=float(total_close_item["timestamp"]) if total_close_item is not None and total_close_item.get("timestamp") is not None else None
+            spread_side="home" if m > (-entry if entry is not None else m) else "away"
+            total_side="over" if t > (total_entry if total_entry is not None else t) else "under"
+            out.append(WalkForwardRow(ex.fixture_id,ex.cutoff_at,p,m,t,ex.target_home_win,ex.target_margin,ex.target_total,entry,close,close_at,total_entry,total_close,total_close_at,ex.outcome_at,spread_side,total_side))
         return out
