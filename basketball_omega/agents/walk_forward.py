@@ -58,7 +58,15 @@ class BasketballWalkForwardTrainer:
             mins=float(p.get("expected_minutes",24) or 0)
             if team==ex.home_team_id: p_h += e.adjusted_impact*mins/48
             elif team==ex.away_team_id: p_a += e.adjusted_impact*mins/48
-        margin=base_margin+p_h-p_a
+        lineup_h = [x for x in ex.features.get("lineups", []) if str(x.get("team_id")) == str(ex.home_team_id)]
+        lineup_a = [x for x in ex.features.get("lineups", []) if str(x.get("team_id")) == str(ex.away_team_id)]
+        def lineup_signal(rows):
+            weighted=[]; weights=[]
+            for x in rows:
+                w=max(1.0, float(x.get("possessions", x.get("expected_minutes", 0)) or 0))
+                weighted.append(float(x.get("net_rating", 0.0))*w); weights.append(w)
+            return sum(weighted)/sum(weights) if weights else 0.0
+        margin=base_margin+p_h-p_a+0.20*(lineup_signal(lineup_h)-lineup_signal(lineup_a))
         total=pace*(h_off+a_off+h_def+a_def)/440.0*200.0
         prob=self._sigmoid(margin/7.0)
         return prob, margin, total
