@@ -120,6 +120,8 @@ def main():
     from basketball_omega.agents.walk_forward import BasketballWalkForwardTrainer
     from basketball_omega.evaluation import evaluate,report_dict
     from basketball_omega.promotion import WalkForwardPromotionGate
+    from basketball_omega.promotion_markets import MarketPromotionGate
+    from basketball_omega.clv import verify_clv
 
     with tempfile.TemporaryDirectory() as td:
         z=Path(td)/"nba_betting_database.zip"
@@ -144,6 +146,10 @@ def main():
         candidate=evaluate(rows)
         baseline=baseline_report(rows)
         decision=WalkForwardPromotionGate(min_samples=MIN_OOS,min_clv=0.0).evaluate(baseline,candidate)
+        market_gate=MarketPromotionGate(min_samples=MIN_OOS,require_clv=True,min_clv=0.0)
+        spread_decision=market_gate.evaluate_spread(baseline,candidate)
+        totals_decision=market_gate.evaluate_totals(baseline,candidate)
+        clv=verify_clv(rows,source="NBA_Betting_release",min_samples=MIN_OOS)
         payload={"status":"PROMOTED" if decision.eligible else "RESEARCH_NO_BET",
                  "corpus":{"url":DB_URL,"sha256":digest,"expected_sha256":DB_SHA256,
                            "coverage":coverage},
@@ -152,7 +158,19 @@ def main():
                  "baseline":report_dict(baseline),"candidate":report_dict(candidate),
                  "promotion":{"eligible":decision.eligible,
                               "reasons":list(decision.reasons),
-                              "required_samples":decision.required_samples}}
+                              "required_samples":decision.required_samples},
+                 "market_promotion":{
+                     "spread":{"eligible":spread_decision.eligible,"reasons":list(spread_decision.reasons),
+                               "samples":spread_decision.samples},
+                     "totals":{"eligible":totals_decision.eligible,"reasons":list(totals_decision.reasons),
+                               "samples":totals_decision.samples},
+                     "clv":{"status":clv.status,"samples":clv.samples,"mean_clv":clv.mean_clv,
+                            "source":clv.source},
+                     "production_eligible":{
+                         "spread":spread_decision.eligible and clv.status=="VERIFIED",
+                         "totals":totals_decision.eligible and clv.status=="VERIFIED"
+                     }
+                 }}
     out=Path(args.output); out.parent.mkdir(parents=True,exist_ok=True)
     out.write_text(json.dumps(payload,indent=2,sort_keys=True))
     print(json.dumps(payload,indent=2,sort_keys=True))
