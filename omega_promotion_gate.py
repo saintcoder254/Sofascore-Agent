@@ -3,9 +3,9 @@
 class OmegaPromotionGate:
     VERSION = "OMEGA-PROMOTION-GATE-v1"
 
-    def __init__(self, min_samples=100, min_clv_samples=20):
-        self.min_samples = max(50, int(min_samples))
-        self.min_clv_samples = max(10, int(min_clv_samples))
+    def __init__(self, min_samples=250, min_clv_samples=50):
+        self.min_samples = max(250, int(min_samples))
+        self.min_clv_samples = max(50, int(min_clv_samples))
 
     def evaluate(self, ledger, integrity, calibration, weights, market_benchmark):
         reasons = []
