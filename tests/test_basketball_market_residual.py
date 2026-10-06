@@ -49,3 +49,14 @@ def test_clv_requires_positive_confidence_bound_for_promotion():
     d=MarketPromotionGate(require_clv=True).evaluate_totals(M(),C())
     assert not d.eligible
     assert "clv_ci_not_positive" in d.reasons
+
+from basketball_omega.evaluation import evaluate
+
+def test_evaluator_does_not_count_pre_cutoff_clv():
+    class R:
+        predicted_home_prob=.6; actual_home_win=1; predicted_margin=5; actual_margin=4
+        predicted_total=220; actual_total=218; cutoff_at=100; closing_at=99; event_at=120
+        entry_spread=-4; closing_spread=-5; clv_side_spread="home"
+    e=evaluate([R()])
+    assert e.clv_samples==0
+    assert e.clv_mean==0.0
