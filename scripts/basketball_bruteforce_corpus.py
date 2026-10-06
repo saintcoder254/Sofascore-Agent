@@ -175,9 +175,22 @@ def main():
         baseline=baseline_report(rows)
         decision=WalkForwardPromotionGate(min_samples=MIN_OOS,min_clv=0.0).evaluate(baseline,candidate)
         market_gate=MarketPromotionGate(min_samples=MIN_OOS,require_clv=True,min_clv=0.0)
-        spread_decision=market_gate.evaluate_spread(baseline,candidate)
-        totals_decision=market_gate.evaluate_totals(baseline,candidate)
-        clv=verify_clv(rows,source="NBA_Betting_release",min_samples=MIN_OOS)
+        from dataclasses import replace
+        clv_spread=verify_clv(rows,source="NBA_Betting_release",min_samples=MIN_OOS,market="spread")
+        clv_total=verify_clv(rows,source="NBA_Betting_release",min_samples=MIN_OOS,market="total")
+        spread_candidate=replace(candidate,clv_mean=clv_spread.mean_clv or 0.0,clv_samples=clv_spread.samples)
+        spread_candidate=type("MarketCandidate",(),{**spread_candidate.__dict__,"clv_lower_ci":clv_spread.lower_ci})()
+        totals_rows=[r for r in rows if r.entry_total is not None]
+        total_market_candidate=replace(candidate,samples=len(totals_rows),
+                                        clv_mean=clv_total.mean_clv or 0.0,clv_samples=clv_total.samples,
+                                        total_mae=(sum(abs(r.predicted_total-r.actual_total) for r in totals_rows)/len(totals_rows) if totals_rows else float("inf")))
+        total_market_candidate=type("MarketCandidate",(),{**total_market_candidate.__dict__,"clv_lower_ci":clv_total.lower_ci})()
+        total_baseline=type("MarketCandidate",(),{**baseline.__dict__,"samples":len(totals_rows),
+            "total_mae":(sum(abs(r.entry_total-r.actual_total) for r in totals_rows)/len(totals_rows) if totals_rows else float("inf")),
+            "clv_samples":clv_total.samples,"clv_mean":clv_total.mean_clv or 0.0,
+            "clv_lower_ci":clv_total.lower_ci})()
+        spread_decision=market_gate.evaluate_spread(baseline,spread_candidate)
+        totals_decision=market_gate.evaluate_totals(total_baseline,total_market_candidate)
         payload={"status":"PROMOTED" if decision.eligible else "RESEARCH_NO_BET",
                  "corpus":{"url":DB_URL,"sha256":digest,"expected_sha256":DB_SHA256,
                            "coverage":coverage},
@@ -192,11 +205,15 @@ def main():
                                "samples":spread_decision.samples},
                      "totals":{"eligible":totals_decision.eligible,"reasons":list(totals_decision.reasons),
                                "samples":totals_decision.samples},
-                     "clv":{"status":clv.status,"samples":clv.samples,"mean_clv":clv.mean_clv,
-                            "source":clv.source},
+                     "clv":{
+                         "spread":{"status":clv_spread.status,"samples":clv_spread.samples,"mean_clv":clv_spread.mean_clv,
+                                   "lower_ci":clv_spread.lower_ci,"upper_ci":clv_spread.upper_ci,"source":clv_spread.source},
+                         "totals":{"status":clv_total.status,"samples":clv_total.samples,"mean_clv":clv_total.mean_clv,
+                                   "lower_ci":clv_total.lower_ci,"upper_ci":clv_total.upper_ci,"source":clv_total.source}
+                     },
                      "production_eligible":{
-                         "spread":spread_decision.eligible and clv.status=="VERIFIED",
-                         "totals":totals_decision.eligible and clv.status=="VERIFIED"
+                         "spread":spread_decision.eligible and clv_spread.status=="VERIFIED" and (clv_spread.lower_ci or 0) > 0,
+                         "totals":totals_decision.eligible and clv_total.status=="VERIFIED" and (clv_total.lower_ci or 0) > 0
                      }
                  }}
     out=Path(args.output); out.parent.mkdir(parents=True,exist_ok=True)
