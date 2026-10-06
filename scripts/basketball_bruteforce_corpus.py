@@ -137,6 +137,8 @@ def main():
             raise RuntimeError(f"insufficient_real_corpus:{len(examples)}")
         trainer=BasketballWalkForwardTrainer(min_train=args.min_train)
         rows=trainer.run(examples)
+        # Candidate and market baseline must share the identical PIT/OOS fixture set.
+        rows=[r for r in rows if r.entry_spread is not None]
         if len(rows) < MIN_OOS:
             raise RuntimeError(f"insufficient_oos_rows:{len(rows)}")
         candidate=evaluate(rows)
