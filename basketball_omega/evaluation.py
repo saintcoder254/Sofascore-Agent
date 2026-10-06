@@ -31,7 +31,14 @@ def evaluate(rows, bins=10):
             conf=sum(r.predicted_home_prob for r in group)/len(group)
             acc=sum(r.actual_home_win for r in group)/len(group)
             ece += len(group)/len(rows)*abs(conf-acc)
-    clvs=[r.entry_spread-r.closing_spread for r in rows if r.entry_spread is not None and r.closing_spread is not None]
+    clvs=[]
+    for r in rows:
+        if None in (r.entry_spread,r.closing_spread,r.cutoff_at,r.closing_at,getattr(r,"event_at",None),getattr(r,"clv_side_spread",None)):
+            continue
+        if not (r.cutoff_at <= r.closing_at <= r.event_at):
+            continue
+        if r.clv_side_spread=="home": clvs.append(r.entry_spread-r.closing_spread)
+        elif r.clv_side_spread=="away": clvs.append(r.closing_spread-r.entry_spread)
     return EvaluationReport(len(rows),brier,ll,ece,mae_m,mae_t,sum(clvs)/len(clvs) if clvs else 0.0,len(clvs),bins,all(rows[i].cutoff_at<=rows[i+1].cutoff_at for i in range(len(rows)-1)))
 
 def report_dict(report):
