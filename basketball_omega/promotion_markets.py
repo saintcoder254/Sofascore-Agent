@@ -50,6 +50,7 @@ class MarketPromotionGate:
         reasons=[]
         if candidate.samples < self.min_samples: reasons.append("insufficient_oos_samples")
         if candidate.total_mae > current.total_mae+self.max_mae_regression: reasons.append("total_mae_regression")
-        if candidate.clv_samples and candidate.clv_mean < self.min_clv: reasons.append("negative_clv")
+        if self.require_clv and (candidate.clv_samples < self.min_samples or candidate.clv_lower_ci is None): reasons.append("clv_unverified")
+        elif candidate.clv_lower_ci is not None and candidate.clv_lower_ci <= self.min_clv: reasons.append("clv_ci_not_positive")
         if not candidate.chronological: reasons.append("non_chronological_oos")
         return MarketPromotionDecision("totals",not reasons,tuple(reasons),candidate.samples)
