@@ -9,4 +9,5 @@ from .calibration import CalibrationAgent
 from .adversarial import AdversarialAgent
 from .regime import RegimeAgent
 from .clv import CLVAgent
+from .online_learner import OnlineWeightLearner
 from .arbiter import BasketballFinalArbiter
