@@ -46,7 +46,7 @@ class OpponentTeammateAdjustmentAgent:
                     vals.append(float(r["impact"]) - (omean.get(oid,grand)-grand) - (tmean.get(tid,grand)-grand))
                 raw=sum(vals)/len(vals)
                 n=len(rs)
-                pmean[pid]=(n*raw + self.shrinkage*grand)/(n+self.shrinkage)
+                pmean[pid]=(n*raw)/(n+self.shrinkage)  # ridge prior is neutral impact (0), not the sample grand mean
             for oid, rs in opp.items():
                 if not oid: continue
                 residual=[float(r["impact"])-pmean.get(str(r["player_id"]),grand) for r in rs]
