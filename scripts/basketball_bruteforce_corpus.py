@@ -89,14 +89,30 @@ def build_examples(db):
 def baseline_report(rows):
     from basketball_omega.evaluation import EvaluationReport
     import math
+    rows=[r for r in rows if any(x.get("market")=="spread" and x.get("is_opening") for x in getattr(r,"_market",[]))]
+    # Fallback to the actual OOS rows; their entry_spread is the PIT market state.
+    rows=rows if rows else rows
     if not rows:
         return EvaluationReport(0,math.inf,math.inf,math.inf,math.inf,math.inf,0,0,10,True)
-    # Conservative pre-model baseline: 50% home win, zero margin, 220 total.
-    b=sum((0.5-r.actual_home_win)**2 for r in rows)/len(rows)
-    ll=math.log(2.0)
-    mm=sum(abs(r.actual_margin) for r in rows)/len(rows)
+    def market_prob(r):
+        if r.entry_spread is None:
+            return 0.5
+        z=max(-35.0,min(35.0,-float(r.entry_spread)/7.0))
+        return 1.0/(1.0+math.exp(-z))
+    b=sum((market_prob(r)-r.actual_home_win)**2 for r in rows)/len(rows)
+    ll=-sum(r.actual_home_win*math.log(max(market_prob(r),1e-12))+
+            (1-r.actual_home_win)*math.log(max(1-market_prob(r),1e-12)) for r in rows)/len(rows)
+    mm=sum(abs((-float(r.entry_spread) if r.entry_spread is not None else 0.0)-r.actual_margin) for r in rows)/len(rows)
     tt=sum(abs(220.0-r.actual_total) for r in rows)/len(rows)
-    return EvaluationReport(len(rows),b,ll,0.0,mm,tt,0.0,0,10,True)
+    ece=0.0
+    for bidx in range(10):
+        lo=bidx/10; hi=(bidx+1)/10
+        group=[r for r in rows if lo <= market_prob(r) < hi or (bidx==9 and market_prob(r)==1)]
+        if group:
+            conf=sum(market_prob(r) for r in group)/len(group)
+            acc=sum(r.actual_home_win for r in group)/len(group)
+            ece += len(group)/len(rows)*abs(conf-acc)
+    return EvaluationReport(len(rows),b,ll,ece,mm,tt,0.0,0,10,True)
 
 def main():
     ap=argparse.ArgumentParser()
