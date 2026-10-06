@@ -5,7 +5,7 @@ from case_database import CaseDatabase
 class TestCaseFederation(unittest.TestCase):
     def test_case_events_federate_once(self):
         fd,path=tempfile.mkstemp(suffix='.db'); os.close(fd)
-        cfd,cpath=tempfile.mkstemp(suffix='.db'); os.close(cpath)
+        cfd,cpath=tempfile.mkstemp(suffix='.db'); os.close(cfd)
         try:
             store=Store(path); case=CaseDatabase(cpath,'fixture-1')
             case.record_observation('TEST','agent','source',{'x':1})
