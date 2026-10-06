@@ -92,10 +92,10 @@ def baseline_report(rows):
     if not rows:
         return EvaluationReport(0,math.inf,math.inf,math.inf,math.inf,math.inf,0,0,10,True)
     # Conservative pre-model baseline: 50% home win, zero margin, 220 total.
-    b=sum((0.5-r.target_home_win)**2 for r in rows)/len(rows)
+    b=sum((0.5-r.actual_home_win)**2 for r in rows)/len(rows)
     ll=math.log(2.0)
-    mm=sum(abs(r.target_margin) for r in rows)/len(rows)
-    tt=sum(abs(220.0-r.target_total) for r in rows)/len(rows)
+    mm=sum(abs(r.actual_margin) for r in rows)/len(rows)
+    tt=sum(abs(220.0-r.actual_total) for r in rows)/len(rows)
     return EvaluationReport(len(rows),b,ll,0.0,mm,tt,0.0,0,10,True)
 
 def main():
