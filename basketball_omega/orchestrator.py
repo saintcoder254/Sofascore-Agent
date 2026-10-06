@@ -4,6 +4,7 @@ from basketball_omega.agents.player_state import PlayerStateAgent
 from basketball_omega.agents.minutes_distribution import MinutesDistributionAgent
 from basketball_omega.agents.player_replacement import PlayerReplacementAgent
 from basketball_omega.agents.lineup_interaction import LineupInteractionAgent
+from basketball_omega.agents.player_team_impact import PlayerTeamImpactAgent
 from basketball_omega.config import BasketballOmegaConfig
 
 class BasketballOmegaOrchestrator:
@@ -13,6 +14,7 @@ class BasketballOmegaOrchestrator:
         self.minutes_distribution=MinutesDistributionAgent()
         self.replacement=PlayerReplacementAgent()
         self.lineup_interaction=LineupInteractionAgent()
+        self.player_team_impact=PlayerTeamImpactAgent()
 
     def _player_state_bundle(self,ctx):
         states={}
@@ -28,7 +30,7 @@ class BasketballOmegaOrchestrator:
         teams={}
         for team_id in (ctx.home,ctx.away):
             roster=[dict(p,player_id=pid) for pid,p in ctx.players.items()
-                    if str(p.get("team",team_id))==str(team_id)]
+                    if str(p.get("team"))==str(team_id)]
             injuries={pid:v for pid,v in ctx.injuries.items() if pid in {str(x.get("player_id")) for x in roster}}
             teams[team_id]=self.replacement.estimate(roster,injuries)
         return teams
@@ -61,10 +63,19 @@ class BasketballOmegaOrchestrator:
                         "uncertainty":interaction.uncertainty,"possessions":interaction.sample_possessions
                     })
 
-        base_margin=sum(o.fair_margin or 0 for o in (impact,lineup,possession,matchup))/4
+        projected_pace=float(possession.evidence.get("pace",100.0) or 100.0)
+        player_team=self.player_team_impact.run(ctx,states,rotations,ctx.market.get("lineup_interactions",[]),projected_pace)
+        opinions.append(player_team)
+        base_margin=(
+            0.55*(possession.fair_margin or 0.0)
+            +0.15*(impact.fair_margin or 0.0)
+            +0.10*(lineup.fair_margin or 0.0)
+            +0.10*(matchup.fair_margin or 0.0)
+            +0.10*(player_team.fair_margin or 0.0)
+        )
         base_total=possession.fair_total or 220
         sim=PossessionSimulatorAgent().run(ctx,base_margin,base_total,self.config.simulations); opinions.append(sim)
-        ctx.market={**ctx.market,"model_margin":sim.fair_margin,"model_total":sim.fair_total}
+        ctx.market={**ctx.market,"model_margin":sim.fair_margin,"model_total":sim.fair_total,"player_team_margin":player_team.fair_margin,"player_team_uncertainty":player_team.evidence.get("uncertainty")}
         opinions.append(MarketResidualAgent().run(ctx))
         if ctx.market.get("entry_spread") is not None or ctx.market.get("closing_spread") is not None:
             opinions.append(CLVAgent().run(ctx.market))
@@ -75,5 +86,5 @@ class BasketballOmegaOrchestrator:
         v.audit={"pipeline":"BASKETBALL-OMEGA-FUSION-v1","agent_count":len(opinions),
                  "sequence":[o.agent for o in opinions],"regime":regime.verdict,
                  "evidence_gate":"PASSED","player_state_count":len(states),
-                 "rotation_teams":list(rotations),"lineup_interaction_count":len(ctx.market.get("lineup_interactions",[]))}
+                 "rotation_teams":list(rotations),"lineup_interaction_count":len(ctx.market.get("lineup_interactions",[])),"player_team_impact":player_team.fair_margin,"player_team_uncertainty":player_team.evidence.get("uncertainty")}
         return v
