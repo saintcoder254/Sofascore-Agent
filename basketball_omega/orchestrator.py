@@ -149,13 +149,13 @@ class BasketballOmegaOrchestrator:
             opinions.append(CalibrationAgent().run(ctx.market["historical_probabilities"],ctx.market["historical_results"]))
         # Digital Twin is frozen at the prediction cutoff for auditability.
         twin=BasketballDigitalTwin(
-            ctx.fixture_id, float(ctx.cutoff_at or 0), ctx.team_stats, ctx.players,
+            str(ctx.market.get("fixture_id","unknown")), float(ctx.market.get("cutoff_at",ctx.timestamp or 0) or 0), ctx.team_stats, ctx.players,
             list(sum(ctx.lineups.values(),[])) if isinstance(ctx.lineups,dict) else list(ctx.lineups),
             ctx.injuries, ctx.market, {"verdict":regime.verdict},
             {"distribution_margin_sd":dist.margin_sd,"distribution_total_sd":dist.total_sd}
         )
-        if ctx.cutoff_at:
-            twin.assert_pit(max([float(p.get("captured_at",ctx.cutoff_at)) for p in ctx.players.values()] or [ctx.cutoff_at]))
+        if ctx.market.get("cutoff_at") is not None:
+            twin.assert_pit(max([float(p.get("captured_at",ctx.market.get("cutoff_at",ctx.timestamp or 0))) for p in ctx.players.values()] or [float(ctx.market.get("cutoff_at",ctx.timestamp or 0) or 0)]))
         v=BasketballFinalArbiter().decide(opinions,ctx.market,self.config.max_agent_disagreement,self.config.min_edge,True)
         v.audit={"pipeline":"BASKETBALL-OMEGA-FUSION-v1","agent_count":len(opinions),
                  "sequence":[o.agent for o in opinions],"regime":regime.verdict,
