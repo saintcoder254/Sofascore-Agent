@@ -29,8 +29,8 @@ class MarketPromotionGate:
         if candidate.log_loss > current.log_loss+self.max_logloss_regression: reasons.append("logloss_regression")
         if candidate.margin_mae > current.margin_mae+self.max_mae_regression: reasons.append("margin_mae_regression")
         if candidate.total_mae > current.total_mae+self.max_mae_regression: reasons.append("total_mae_regression")
-        if self.require_clv and (candidate.clv_samples < self.min_samples or candidate.clv_lower_ci is None): reasons.append("clv_unverified")
-        elif candidate.clv_lower_ci is not None and candidate.clv_lower_ci <= self.min_clv: reasons.append("clv_ci_not_positive")
+        if self.require_clv and (candidate.clv_samples < self.min_samples or getattr(candidate,'clv_lower_ci',None) is None): reasons.append("clv_unverified")
+        elif getattr(candidate,'clv_lower_ci',None) is not None and getattr(candidate,'clv_lower_ci') <= self.min_clv: reasons.append("clv_ci_not_positive")
         if not candidate.chronological: reasons.append("non_chronological_oos")
         return MarketPromotionDecision(market,not reasons,tuple(reasons),candidate.samples)
 
