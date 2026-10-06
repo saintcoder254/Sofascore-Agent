@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DB_URL = "https://github.com/NBA-Betting/NBA_Betting/releases/download/v0.1.0-pre/nba_betting_database.zip"
-DB_SHA256 = "c0f0bfc0a7dc6a98fad7f2b40670b861a8c4483a66b69aea86a57955946ca97"
+DB_SHA256 = "c0f0bfc0a7dc6a98fad7f2b40670b861a8c4483a66b69aea86a57955946ca97e"
 MIN_OOS = 250
 
 def ts(value):
