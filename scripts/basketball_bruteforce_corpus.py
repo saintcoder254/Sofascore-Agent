@@ -41,19 +41,35 @@ def latest_team_state(conn, team, game_date):
     return {"ortg":float(row[0] or 110.0),"drtg":float(row[1] or 110.0),
             "pace":float(row[2] or 99.0)}
 
+def table_columns(conn, table):
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+def first_column(columns, candidates):
+    return next((c for c in candidates if c in columns), None)
+
 def build_examples(db):
     from basketball_omega.historical_dataset import BasketballTrainingExample
     conn=sqlite3.connect(db)
-    rows=conn.execute("""
+    gc=table_columns(conn,"games"); lc=table_columns(conn,"lines")
+    total_open_col=first_column(gc,("open_total","opening_total","open_ou","total_open"))
+    if total_open_col is None:
+        total_open_col=first_column(lc,("open_total","opening_total","open_ou","total_open"))
+        total_open_expr=f"l.{total_open_col}" if total_open_col else "NULL"
+    else:
+        total_open_expr=f"g.{total_open_col}"
+    total_close_col=first_column(lc,("current_total","closing_total","total_close","current_ou","total_current"))
+    total_close_expr=f"l.{total_close_col}" if total_close_col else "NULL"
+    rows=conn.execute(f"""
       SELECT g.game_id,g.game_datetime,g.home_team,g.away_team,g.open_line,
-             g.home_score,g.away_score,l.current_line,l.line_last_update
+             g.home_score,g.away_score,l.current_line,l.line_last_update,
+             {total_open_expr} AS open_total,{total_close_expr} AS close_total
       FROM games g LEFT JOIN lines l ON l.game_id=g.game_id
       WHERE g.game_completed=1 AND g.home_score IS NOT NULL
         AND g.away_score IS NOT NULL
       ORDER BY g.game_datetime,g.game_id
     """).fetchall()
     examples=[]; skipped=0; closing_count=0
-    for gid,gdt,home,away,open_line,hs,as_,close_line,close_ts in rows:
+    for gid,gdt,home,away,open_line,hs,as_,close_line,close_ts,open_total,close_total in rows:
         if not gdt: skipped+=1; continue
         game_ts=ts(gdt); game_date=str(gdt)[:10]
         h=latest_team_state(conn,home,game_date)
@@ -69,8 +85,18 @@ def build_examples(db):
                 if ts(close_ts) <= game_ts:
                     markets.append({"market":"spread","line":float(close_line),"price":-110,
                                     "side":"home","source":"NBA_Betting_release",
-                                    "is_opening":False,"is_closing":True})
+                                    "is_opening":False,"is_closing":True,"timestamp":ts(close_ts)})
                     closing_count+=1
+            except Exception: pass
+        if open_total is not None:
+            markets.append({"market":"total","line":float(open_total),"price":-110,
+                            "side":"total","source":"NBA_Betting_release","is_opening":True,"is_closing":False})
+        if close_total is not None and close_ts:
+            try:
+                if ts(close_ts) <= game_ts:
+                    markets.append({"market":"total","line":float(close_total),"price":-110,
+                                    "side":"total","source":"NBA_Betting_release","is_opening":False,
+                                    "is_closing":True,"timestamp":ts(close_ts)})
             except Exception: pass
         examples.append(BasketballTrainingExample(
             fixture_id=str(gid),cutoff_at=game_ts-1.0,
@@ -83,8 +109,10 @@ def build_examples(db):
             target_total=float(hs)+float(as_),
             outcome_at=game_ts+1.0))
     conn.close()
+    total_rows=sum(1 for x in examples if any(m.get("market")=="total" and m.get("is_opening") for m in x.features["markets"]))
     return examples, {"source_games":len(rows),"usable_examples":len(examples),
-                      "skipped":skipped,"closing_line_rows":closing_count}
+                      "skipped":skipped,"closing_line_rows":closing_count,"opening_total_rows":total_rows,
+                      "total_columns":{"opening":total_open_col,"closing":total_close_col}}
 
 def baseline_report(rows):
     from basketball_omega.evaluation import EvaluationReport
