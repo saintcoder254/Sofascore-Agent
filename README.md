@@ -85,3 +85,17 @@ The hardening layer also includes:
 - `docs/UMIOS_TITAN_10_POINT_HARDENING.md` documenting the ten corrective controls.
 
 The model deliberately prefers NO_BET when the probability model, evidence regime or sample depth is inadequate. Monte Carlo sample count is a simulation parameter, not a substitute for correct model specification.
+
+
+## Basketball OMEGA v3 — possession x efficiency hardening
+
+The dedicated basketball engine now uses a possession x efficiency model whenever at least five recent games per team contain explicit box-score inputs sufficient to estimate possessions. Possessions use the standard FGA - ORB + TO + 0.44 x FTA approximation only when all required components are present. Offensive and defensive efficiency are then blended with opponent evidence, with a 25% score-form anchor to limit small-sample instability.
+
+When possession inputs are unavailable, the engine explicitly falls back to the score-form path. It does not infer possessions from unrelated statistics. Every prediction reports model_path, expected_possessions, efficiency diagnostics, and the number of efficiency-supported games.
+
+Production promotion is now hard-gated at a minimum of 250 chronological observations, with a 250-observation OOS test requirement and a 50-observation CLV floor when CLV is available. These thresholds are gates, not proof of profitability: the repository still requires a genuine chronological walk-forward tournament, calibration pass, market benchmark/CLV evidence, and integrity checks before promotion. Until those empirical conditions are met, the model remains SHADOW/NO_BET rather than being treated as production-proven.
+
+
+## Basketball post-match hardening: score-form fallback is shadow-only
+
+The basketball engine may retain a score-form fallback for diagnostics when verified possession/efficiency inputs are unavailable. That fallback is explicitly marked `production_eligible=false` and cannot produce a `QUALIFIED_PREDICTION`. Production selection requires the possession x efficiency path to be supported, in addition to the repository's calibration, chronological OOS, integrity, market benchmark, and CLV gates. Recent-score form is therefore evidence for analysis, not a substitute for validated possession/efficiency modeling.

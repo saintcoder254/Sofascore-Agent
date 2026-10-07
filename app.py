@@ -36,8 +36,8 @@ probability=UMIOSProbabilityEngine()
 arbiter=UMIOSFinalArbiter(store)
 incident_audit=TitanIncidentAudit()
 omega_weights=OmegaWeightEngine(min_samples=int(os.getenv("OMEGA_WEIGHT_MIN_SAMPLES","50")))
-omega_calibration=CalibrationPipeline(min_train=int(os.getenv("OMEGA_CAL_MIN_TRAIN","50")),min_test=int(os.getenv("OMEGA_CAL_MIN_TEST","20")))
-omega_promotion=OmegaPromotionGate(min_samples=int(os.getenv("OMEGA_PROMOTION_MIN_SAMPLES","100")),min_clv_samples=int(os.getenv("OMEGA_PROMOTION_MIN_CLV","20")))
+omega_calibration=CalibrationPipeline(min_train=int(os.getenv("OMEGA_CAL_MIN_TRAIN","175")),min_test=int(os.getenv("OMEGA_CAL_MIN_TEST","250")))
+omega_promotion=OmegaPromotionGate(min_samples=int(os.getenv("OMEGA_PROMOTION_MIN_SAMPLES","250")),min_clv_samples=int(os.getenv("OMEGA_PROMOTION_MIN_CLV","50")))
 omega_leagues=LeagueIntelligenceEngine(min_samples=int(os.getenv("OMEGA_LEAGUE_MIN_SAMPLES","30")),proven_samples=int(os.getenv("OMEGA_LEAGUE_PROVEN_SAMPLES","100")))
 state={"last_poll":None,"last_success":None,"last_error":None,"last_poll_duration_ms":None,"last_poll_items":0,"polls_total":0,"polls_success":0,"polls_failed":0,"consecutive_failures":0,"next_poll_at":None,"items":0,"running":False,"evolution_running":False,"last_evolution_at":None,"research_running":False,"last_research_at":None,"learning_running":False,"last_learning_at":None,"source_learning_running":False,"last_source_learning_at":None,"verification_learning_running":False,"last_verification_learning_at":None,"enrichment_running":False,"last_enrichment_at":None,"enrichment_items":0,"auto_analyze_items":0,"last_auto_analyze_at":None,"arbiter_passes":0,"arbiter_blocks":0,"active_source":None}
 class PredictionIn(BaseModel):
@@ -186,7 +186,7 @@ async def record_closing_odds(prediction_id:str,item:ClosingOddsIn):
     return {"ok":True,"prediction_id":prediction_id,"closing_odds":item.closing_odds,"closing_at":item.closing_at or time.time(),"closing_source":item.closing_source}
 @app.get("/learning/omega/oos")
 async def omega_oos():
-    return OOSModelTournament(min_train=int(os.getenv("OMEGA_OOS_MIN_TRAIN","50")),min_test=int(os.getenv("OMEGA_OOS_MIN_TEST","20"))).run(store.oos_tournament_ledger())
+    return OOSModelTournament(min_train=int(os.getenv("OMEGA_OOS_MIN_TRAIN","175")),min_test=int(os.getenv("OMEGA_OOS_MIN_TEST","250"))).run(store.oos_tournament_ledger())
 
 @app.get("/learning/omega")
 async def omega_learning_status():
