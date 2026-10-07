@@ -2,9 +2,9 @@
 from calibration_engine import CalibrationEngine
 
 class CalibrationPipeline:
-    VERSION="OMEGA-CALIBRATION-PIPELINE-v1"
-    def __init__(self,min_train=50,min_test=20):
-        self.min_train=max(20,int(min_train)); self.min_test=max(10,int(min_test)); self.engine=CalibrationEngine()
+    VERSION="OMEGA-CALIBRATION-PIPELINE-v2-WALKFORWARD"
+    def __init__(self,min_train=175,min_test=250):
+        self.min_train=max(175,int(min_train)); self.min_test=max(250,int(min_test)); self.engine=CalibrationEngine()
     def run(self,ledger):
         rows=sorted([r for r in ledger if r.get("predicted_at") is not None],key=lambda r:r["predicted_at"])
         minimum=self.min_train+self.min_test
