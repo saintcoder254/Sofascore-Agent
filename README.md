@@ -93,8 +93,18 @@ The dedicated basketball engine now uses a possession x efficiency model wheneve
 
 When possession inputs are unavailable, the engine explicitly falls back to the score-form path. It does not infer possessions from unrelated statistics. Every prediction reports model_path, expected_possessions, efficiency diagnostics, and the number of efficiency-supported games.
 
-Production promotion is now hard-gated at a minimum of 250 chronological observations, with a 250-observation OOS test requirement and a 50-observation CLV floor when CLV is available. These thresholds are gates, not proof of profitability: the repository still requires a genuine chronological walk-forward tournament, calibration pass, market benchmark/CLV evidence, and integrity checks before promotion. Until those empirical conditions are met, the model remains SHADOW/NO_BET rather than being treated as production-proven.
+Production promotion is now hard-gated at a minimum of 250 resolved observations and requires market-specific expanding walk-forward OOS evidence with at least two forward test windows of 250 observations each, a calibration pass, ledger integrity, an earned model weight, and verified positive CLV. CLV is never treated as optional or neutral. Market benchmark evidence is also checked at the same market granularity as the OOS result.
 
+A separate production lock is enforced in the application. OMEGA_PRODUCTION_ENABLED defaults to false, and a prediction cannot be persisted as production-qualified unless both that switch and the strict promotion gate are satisfied. Analysis may therefore remain NO_BET/SHADOW while the historical corpus is being accumulated.
+
+These thresholds are gates, not proof of profitability. The repository still requires genuine chronological evidence, positive market benchmark/CLV evidence, integrity checks, and post-match verification before production promotion.
+
+
+## Basketball OMEGA v4 — swarm hardening: walk-forward + production lock
+
+The OOS tournament now evaluates each model/market pair independently using expanding chronological windows. Pooled multi-market results cannot satisfy a market-specific promotion gate. Calibration uses the same forward-only principle and never learns a calibration transform from future outcomes.
+
+The production path is wired through one promotion lock: chronological OOS, calibration, ledger integrity, earned model status, and market-specific positive CLV must all agree before production persistence is allowed. This closes the previous gap where downstream artifacts could appear healthy without being explicitly linked to OOS evidence.
 
 ## Basketball post-match hardening: score-form fallback is shadow-only
 
