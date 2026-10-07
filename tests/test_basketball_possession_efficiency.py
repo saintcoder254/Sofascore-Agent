@@ -44,7 +44,7 @@ def test_score_form_fallback_is_shadow_only():
 
 
 def test_history_deduplicates_cross_feed_fixture_duplicates():
-    e={"status":{"type":"finished"},"id":"dup-1",
+    e={"status":{"type":{"state":"finished"}},"id":"dup-1",
        "homeTeam":{"id":"H"},"awayTeam":{"id":"A"},
        "homeScore":{"current":88},"awayScore":{"current":82},
        "statistics":{"H":{"FGA":78,"ORB":10,"TO":12,"FTA":18},
