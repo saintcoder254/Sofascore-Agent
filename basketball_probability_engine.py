@@ -95,14 +95,10 @@ class BasketballProbabilityEngine:
         for e in out:
             eid = e.get("id") or e.get("eventId")
             if eid is None:
-                h, a = e.get("homeTeam") or {}, e.get("awayTeam") or {}
-                eid = (
-                    str(e.get("startTimestamp") or e.get("timestamp") or "")
-                    + "|" + str(h.get("id") or h.get("name") or "")
-                    + "|" + str(a.get("id") or a.get("name") or "")
-                    + "|" + str((e.get("homeScore") or {}).get("current"))
-                    + "|" + str((e.get("awayScore") or {}).get("current"))
-                )
+                # Without a provider event ID or timestamp, do not collapse separate
+                # games merely because their scores/stats happen to match. Object
+                # identity is safe for duplicated references within one evidence bundle.
+                eid = "object:" + str(id(e))
             deduped[str(eid)] = e
         out = list(deduped.values())
 
