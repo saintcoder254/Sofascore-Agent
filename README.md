@@ -94,3 +94,8 @@ The dedicated basketball engine now uses a possession x efficiency model wheneve
 When possession inputs are unavailable, the engine explicitly falls back to the score-form path. It does not infer possessions from unrelated statistics. Every prediction reports model_path, expected_possessions, efficiency diagnostics, and the number of efficiency-supported games.
 
 Production promotion is now hard-gated at a minimum of 250 chronological observations, with a 250-observation OOS test requirement and a 50-observation CLV floor when CLV is available. These thresholds are gates, not proof of profitability: the repository still requires a genuine chronological walk-forward tournament, calibration pass, market benchmark/CLV evidence, and integrity checks before promotion. Until those empirical conditions are met, the model remains SHADOW/NO_BET rather than being treated as production-proven.
+
+
+## Basketball post-match hardening: score-form fallback is shadow-only
+
+The basketball engine may retain a score-form fallback for diagnostics when verified possession/efficiency inputs are unavailable. That fallback is explicitly marked `production_eligible=false` and cannot produce a `QUALIFIED_PREDICTION`. Production selection requires the possession x efficiency path to be supported, in addition to the repository's calibration, chronological OOS, integrity, market benchmark, and CLV gates. Recent-score form is therefore evidence for analysis, not a substitute for validated possession/efficiency modeling.
