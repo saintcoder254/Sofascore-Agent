@@ -41,3 +41,15 @@ def test_score_form_fallback_is_shadow_only():
     assert r["fallback_reason"]=="INSUFFICIENT_VERIFIED_POSSESSION_EFFICIENCY_HISTORY"
     assert r["selection"] is None
     assert r["state"]=="NO_BET"
+
+
+def test_history_deduplicates_cross_feed_fixture_duplicates():
+    e={"status":{"type":"finished"},"id":"dup-1",
+       "homeTeam":{"id":"H"},"awayTeam":{"id":"A"},
+       "homeScore":{"current":88},"awayScore":{"current":82},
+       "statistics":{"H":{"FGA":78,"ORB":10,"TO":12,"FTA":18},
+                      "A":{"FGA":76,"ORB":9,"TO":13,"FTA":17}}}
+    evidence={"history":{"home":{"events":[e,e]},
+                         "away":{"events":[e]}}}
+    rows=BasketballProbabilityEngine._recent_events(evidence,"H")
+    assert len(rows)==1
