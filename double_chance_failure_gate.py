@@ -73,7 +73,7 @@ class MarketValidationGate:
         implied=1/odds
         if odds<1.50 and lower<max(implied+.02,.70):blockers.append("UMQE_SHORT_PRICE_BAND_UNRELIABLE")
         if odds<1.70 and (p*odds-1)<.07:blockers.append("UMQE_LOW_SHORT_PRICE_BUFFER")
-        if (evidence.get("market_confirmed") is not True):warnings.append("UMQE_MARKET_CONFIRMATION_MISSING")
+        if (evidence.get("market_confirmed") is not True):blockers.append("UMQE_MARKET_CONFIRMATION_MISSING")
         calibrated=.70*p+.30*hit
         return self._result(market,selection,p,odds,exact,market_band,blockers,warnings,calibrated,hit,gap,lower,band,len(market_rows))
 
