@@ -71,6 +71,26 @@ class BasketballProbabilityEngine:
                 continue
             if str(h.get("id")) == str(team_id) or str(a.get("id")) == str(team_id):
                 out.append(e)
+
+        # Home/away feeds can arrive in separate arrays and are not guaranteed
+        # to be chronologically aligned. Never let concatenation order masquerade
+        # as recency. Prefer explicit event timestamps; retain source order only
+        # when no timestamp exists.
+        def event_time(e):
+            for key in ("startTimestamp", "timestamp", "startTime", "scheduledAt"):
+                value = e.get(key)
+                if isinstance(value, (int, float)):
+                    return float(value)
+                if isinstance(value, str):
+                    try:
+                        return float(value)
+                    except ValueError:
+                        pass
+            return None
+
+        if all(event_time(e) is not None for e in out):
+            out.sort(key=event_time)
+
         return out[-10:]
 
     @classmethod
@@ -314,6 +334,8 @@ class BasketballProbabilityEngine:
         sd_total = max(total_sd, 1.15 * score_sd)
         sd_total = max(9.0, min(28.0, sd_total))
 
+        production_eligible = model_path == "possession_efficiency"
+
         return {
             "home_points": max(55.0, min(140.0, hp)),
             "away_points": max(55.0, min(140.0, ap)),
@@ -324,6 +346,12 @@ class BasketballProbabilityEngine:
             "away_samples": len(as_),
             "efficiency_samples": efficiency_samples,
             "model_path": model_path,
+            "production_eligible": production_eligible,
+            "fallback_reason": (
+                None
+                if production_eligible
+                else "INSUFFICIENT_VERIFIED_POSSESSION_EFFICIENCY_HISTORY"
+            ),
             "expected_possessions": expected_possessions,
             "expected_ortg": expected_ortg,
             "expected_drtg": expected_drtg,
@@ -417,7 +445,11 @@ class BasketballProbabilityEngine:
             key=lambda x: (x["edge"], x["expected_value"]),
             reverse=True,
         )
-        selection = qualified[0] if qualified else None
+        # Score-form is retained for diagnostics and shadow forecasting, but it
+        # cannot promote a market to QUALIFIED_PREDICTION. Without verified
+        # possession/efficiency evidence, recent scoring can be dominated by
+        # shooting variance, overtime, matchup noise, or schedule effects.
+        selection = qualified[0] if qualified and est["production_eligible"] else None
         if selection:
             selection["tail_risk"] = round(sum(t > selection["line"] for t in totals) / n, 4)
 
@@ -429,6 +461,8 @@ class BasketballProbabilityEngine:
             "expected_total": round(est["expected_total"], 2),
             "distribution_sd": round(est["sd_total"], 2),
             "model_path": est["model_path"],
+            "production_eligible": est["production_eligible"],
+            "fallback_reason": est["fallback_reason"],
             "expected_possessions": None if est["expected_possessions"] is None else round(est["expected_possessions"], 3),
             "expected_ortg": est["expected_ortg"],
             "expected_drtg": est["expected_drtg"],
