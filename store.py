@@ -116,8 +116,26 @@ class Store:
         rows=self.market_benchmark_ledger()
         if market: rows=[r for r in rows if r['market']==market]
         if competition: rows=[r for r in rows if r['competition']==competition]
-        clvs=[r['clv'] for r in rows if r['clv'] is not None]
-        return {'samples':len(rows),'clv_available':len(clvs),'avg_clv':None if not clvs else sum(clvs)/len(clvs),'positive_clv_rate':None if not clvs else sum(x>0 for x in clvs)/len(clvs),'min_clv':None if not clvs else min(clvs),'max_clv':None if not clvs else max(clvs)}
+        def summary(rs):
+            clvs=[r['clv'] for r in rs if r['clv'] is not None]
+            n=len(clvs)
+            avg=None if not clvs else sum(clvs)/n
+            return {
+                'samples':len(rs),
+                'clv_available':n,
+                'avg_clv':avg,
+                'positive_clv_rate':None if not clvs else sum(x>0 for x in clvs)/n,
+                'min_clv':None if not clvs else min(clvs),
+                'max_clv':None if not clvs else max(clvs),
+                'state':'PASSED' if n>=50 and avg is not None and avg>0 else 'SHADOW',
+            }
+        report=summary(rows)
+        by_market={}
+        for m in sorted({r['market'] for r in rows}):
+            by_market[m]=summary([r for r in rows if r['market']==m])
+        report['by_market']=by_market
+        report['version']='OMEGA-MARKET-BENCHMARK-v2-MARKET-CLV'
+        return report
 
     def calibration_ledger(self):
         return [{'predicted_at':r['predicted_at'],'p':r['predicted_probability'],'y':r['outcome'],'model':r['model_version'],'market':r['market'],'competition':(r.get('features') or {}).get('competition')} for r in self.predictions_with_outcomes()]
