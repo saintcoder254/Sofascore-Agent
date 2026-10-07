@@ -88,6 +88,24 @@ class BasketballProbabilityEngine:
                         pass
             return None
 
+        # Home/away history arrays can contain the same fixture twice. Deduplicate
+        # before selecting the most recent observations so one game cannot receive
+        # double statistical weight.
+        deduped = {}
+        for e in out:
+            eid = e.get("id") or e.get("eventId")
+            if eid is None:
+                h, a = e.get("homeTeam") or {}, e.get("awayTeam") or {}
+                eid = (
+                    str(e.get("startTimestamp") or e.get("timestamp") or "")
+                    + "|" + str(h.get("id") or h.get("name") or "")
+                    + "|" + str(a.get("id") or a.get("name") or "")
+                    + "|" + str((e.get("homeScore") or {}).get("current"))
+                    + "|" + str((e.get("awayScore") or {}).get("current"))
+                )
+            deduped[str(eid)] = e
+        out = list(deduped.values())
+
         if all(event_time(e) is not None for e in out):
             out.sort(key=event_time)
 
