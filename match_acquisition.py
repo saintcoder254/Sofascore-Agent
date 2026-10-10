@@ -7,7 +7,7 @@ class MatchAcquisitionEngine:
     @staticmethod
     def _team_key(value):
         value = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode().lower()
-        value = re.sub(r"\b(fc|sc|cf|afc|club|football|soccer)\b", " ", value)
+        value = re.sub(r"\b(fc|sc|cf|afc|sk|fk|club|football|soccer)\b", " ", value)
         return re.sub(r"[^a-z0-9]", "", value)
 
     @classmethod
