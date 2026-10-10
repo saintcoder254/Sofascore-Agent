@@ -3,8 +3,8 @@ import math, time
 class UMIOSQualifier:
     """
     Conservative pre-analysis gate. It never manufactures probabilities.
-    A fixture becomes QUALIFIED only when evidence integrity and market
-    information pass minimum gates; otherwise the correct state is NO_BET.
+    A fixture qualifies only when required evidence is present, fresh, identifiable,
+    pre-match, market-backed, independently verified, and explicitly TRUSTED.
     """
     REQUIRED = ("event", "lineups", "statistics", "incidents")
 
@@ -19,64 +19,73 @@ class UMIOSQualifier:
     def _prob_from_odds(odds):
         try:
             o=float(odds)
-            return None if o <= 1 else 1.0/o
-        except (TypeError, ValueError):
+            return None if not math.isfinite(o) or o <= 1 else 1.0/o
+        except (TypeError, ValueError, OverflowError):
             return None
 
     def qualify(self, fixture, evidence, now=None):
-        now = now or time.time()
+        now = time.time() if now is None else float(now)
+        evidence = evidence if isinstance(evidence, dict) else {}
         checks = {}
         missing = []
         for key in self.REQUIRED:
-            ok = key in evidence and not self._err(evidence[key])
+            ok = key in evidence and not self._err(evidence[key]) and isinstance(evidence[key], dict)
             checks[key] = ok
             if not ok:
                 missing.append(key)
 
         retrieved = evidence.get("retrieved_at")
-        age = None if retrieved is None else max(0.0, now-float(retrieved))
+        try:
+            retrieved = float(retrieved)
+            age = max(0.0, now-retrieved) if math.isfinite(retrieved) else None
+        except (TypeError, ValueError, OverflowError):
+            age = None
         checks["freshness"] = age is not None and age <= self.stale_after
 
         event = evidence.get("event") or {}
         status = ((event.get("status") or {}).get("type") or {})
         state = str(status.get("state") or "").lower()
-        checks["pre_match_state"] = state not in {"cancelled","canceled","postponed","abandoned","suspended","finished","completed","final"}
-
+        checks["pre_match_state"] = state not in {"cancelled","canceled","postponed","abandoned","suspended","finished","completed","final","post"}
         home = ((event.get("homeTeam") or {}).get("name"))
         away = ((event.get("awayTeam") or {}).get("name"))
         checks["fixture_identity"] = bool(home and away)
 
         odds_count = 0
-        odds_values = []
         for market in (evidence.get("odds") or {}).values():
-            if not isinstance(market, dict): continue
+            if not isinstance(market, dict) or market.get("error"):
+                continue
             for row in market.get("markets", []) or []:
                 for choice in row.get("choices", []) or []:
                     raw = choice.get("decimalValue") if choice.get("decimalValue") is not None else choice.get("odds")
-                    p = self._prob_from_odds(raw)
-                    if p is not None:
+                    if self._prob_from_odds(raw) is not None:
                         odds_count += 1
-                        odds_values.append(p)
         checks["market_data"] = odds_count > 0
 
         lineup = evidence.get("lineups") or {}
         checks["lineup_signal"] = bool(lineup.get("home") or lineup.get("away") or lineup.get("homeTeam") or lineup.get("awayTeam"))
 
         verification = evidence.get("verification") or {}
-        checks["external_verification"] = bool(verification.get("events"))
+        checks["external_verification"] = bool(verification.get("events")) and not bool(verification.get("error"))
 
-        passed = sum(bool(v) for v in checks.values())
-        total = len(checks)
-        integrity_score = round(100.0*passed/total, 1) if total else 0.0
+        trust = evidence.get("data_trust") or {}
+        trust_state = str(trust.get("state") or "").upper()
+        checks["trusted_evidence"] = trust_state == "TRUSTED"
 
         blockers = []
-        if not checks["freshness"]: blockers.append("STALE_FEED")
+        if not checks["freshness"]: blockers.append("STALE_OR_INVALID_TIMESTAMP")
         if not checks["fixture_identity"]: blockers.append("FIXTURE_IDENTITY_UNCONFIRMED")
         if not checks["pre_match_state"]: blockers.append("MATCH_NOT_ELIGIBLE")
         if not checks["market_data"]: blockers.append("NO_RELIABLE_MARKET_DATA")
         if missing: blockers.append("MISSING:" + ",".join(missing))
+        if not checks["lineup_signal"]: blockers.append("LINEUP_SIGNAL_MISSING")
+        if not checks["external_verification"]: blockers.append("INDEPENDENT_VERIFICATION_MISSING")
+        if not checks["trusted_evidence"]:
+            trust_blocks = trust.get("hard_blocks") or []
+            blockers.append("DATA_TRUST_NOT_TRUSTED:" + (",".join(str(x) for x in trust_blocks) if trust_blocks else trust_state or "MISSING"))
 
-        # This is an eligibility gate, not a betting confidence score.
+        passed = sum(bool(v) for v in checks.values())
+        total = len(checks)
+        integrity_score = round(100.0*passed/total, 1) if total else 0.0
         qualified = not blockers and integrity_score >= 80.0
         return {
             "fixture": {"id": str(fixture), "home": home, "away": away},
@@ -86,5 +95,6 @@ class UMIOSQualifier:
             "checks": checks,
             "blockers": blockers,
             "market_observations": odds_count,
+            "data_trust_state": trust_state or "MISSING",
             "generated_at": now,
         }
