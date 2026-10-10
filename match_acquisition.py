@@ -5,6 +5,36 @@ class MatchAcquisitionEngine:
     def __init__(self,fusion): self.fusion=fusion
 
     async def enrich_event(self,event_id):
+        # Alternate-source IDs must never be passed to SofaScore endpoints.
+        # Until FotMob payload normalization is qualified for every required
+        # evidence section, preserve the raw evidence and fail the UMIOS gate.
+        if str(event_id).startswith("fotmob:"):
+            source_id = str(event_id).split(":", 1)[1]
+            try:
+                raw = await self.fusion.fotmob.match_details(source_id)
+            except Exception as exc:
+                raw = {"source": "fotmob", "source_event_id": source_id,
+                       "error": repr(exc), "normalization_state": "ACQUISITION_FAILED"}
+            now = time.time()
+            return {
+                "event": {"id": str(event_id), "source": "fotmob",
+                          "source_event_id": source_id,
+                          "normalization_state": "UNQUALIFIED"},
+                "statistics": {"error": "FOTMOB_STATISTICS_NOT_NORMALIZED"},
+                "shotmap": {"error": "FOTMOB_SHOTMAP_NOT_NORMALIZED"},
+                "incidents": {"error": "FOTMOB_INCIDENTS_NOT_NORMALIZED"},
+                "lineups": {"error": "FOTMOB_LINEUPS_NOT_NORMALIZED"},
+                "h2h": {"error": "FOTMOB_H2H_NOT_NORMALIZED"},
+                "history": {"home": {"events": []}, "away": {"events": []}},
+                "odds": {"1": {"error": "FOTMOB_ODDS_NOT_NORMALIZED"},
+                         "2": {"error": "FOTMOB_ODDS_NOT_NORMALIZED"}},
+                "verification": {"events": [], "error": "SOURCE_IDENTITY_ONLY"},
+                "final_results": {"sources": []},
+                "fotmob_raw": raw,
+                "data_trust": {"state": "QUARANTINED",
+                               "hard_blocks": ["ALTERNATE_SOURCE_EVIDENCE_NOT_NORMALIZED"]},
+                "retrieved_at": now,
+            }
         p=self.fusion.primary
         base={}
         tasks={

@@ -147,3 +147,41 @@ class FotMobAdapter:
 
     async def close(self):
         await self.client.aclose()
+
+
+    async def match_details(self, match_id):
+        """Fetch raw FotMob match details without pretending they are SofaScore data.
+
+        The returned payload is intentionally source-tagged and unmodified.
+        Downstream normalization must validate each required evidence section
+        before UMIOS can qualify a fixture.
+        """
+        if match_id is None or not str(match_id).strip():
+            raise ValueError("FotMob match_id is required")
+        self.metrics["attempts"] += 1
+        try:
+            response = await self.client.get(
+                f"{self.BASE}/matchDetails",
+                params={"matchId": str(match_id)},
+            )
+            self.metrics["last_status_code"] = response.status_code
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict) or not payload:
+                raise RuntimeError("FotMob returned an empty or invalid match-details payload")
+            retrieved_at = time.time()
+            self.metrics["success"] += 1
+            self.metrics["last_success_at"] = retrieved_at
+            self.metrics["last_error"] = None
+            return {
+                "source": "fotmob",
+                "source_event_id": str(match_id),
+                "retrieved_at": retrieved_at,
+                "raw_payload": payload,
+                "normalization_state": "RAW_UNNORMALIZED",
+            }
+        except Exception as exc:
+            self.metrics["failures"] += 1
+            self.metrics["last_error"] = repr(exc)
+            logger.error("FOTMOB_MATCH_DETAILS_ERROR match_id=%s error=%r", match_id, exc)
+            raise
