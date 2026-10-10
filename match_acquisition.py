@@ -12,29 +12,60 @@ class MatchAcquisitionEngine:
             source_id = str(event_id).split(":", 1)[1]
             try:
                 raw = await self.fusion.fotmob.match_details(source_id)
+                bundle = self.fusion.fotmob.normalize_match_details(raw)
             except Exception as exc:
-                raw = {"source": "fotmob", "source_event_id": source_id,
-                       "error": repr(exc), "normalization_state": "ACQUISITION_FAILED"}
-            now = time.time()
-            return {
-                "event": {"id": str(event_id), "source": "fotmob",
-                          "source_event_id": source_id,
-                          "normalization_state": "UNQUALIFIED"},
-                "statistics": {"error": "FOTMOB_STATISTICS_NOT_NORMALIZED"},
-                "shotmap": {"error": "FOTMOB_SHOTMAP_NOT_NORMALIZED"},
-                "incidents": {"error": "FOTMOB_INCIDENTS_NOT_NORMALIZED"},
-                "lineups": {"error": "FOTMOB_LINEUPS_NOT_NORMALIZED"},
-                "h2h": {"error": "FOTMOB_H2H_NOT_NORMALIZED"},
-                "history": {"home": {"events": []}, "away": {"events": []}},
-                "odds": {"1": {"error": "FOTMOB_ODDS_NOT_NORMALIZED"},
-                         "2": {"error": "FOTMOB_ODDS_NOT_NORMALIZED"}},
-                "verification": {"events": [], "error": "SOURCE_IDENTITY_ONLY"},
-                "final_results": {"sources": []},
-                "fotmob_raw": raw,
-                "data_trust": {"state": "QUARANTINED",
-                               "hard_blocks": ["ALTERNATE_SOURCE_EVIDENCE_NOT_NORMALIZED"]},
-                "retrieved_at": now,
-            }
+                now = time.time()
+                return {
+                    "event": {"id": str(event_id), "source": "fotmob",
+                              "source_event_id": source_id, "normalization_state": "UNQUALIFIED",
+                              "error": repr(exc)},
+                    "statistics": {"error": "FOTMOB_ACQUISITION_FAILED"},
+                    "shotmap": {"error": "FOTMOB_ACQUISITION_FAILED"},
+                    "incidents": {"error": "FOTMOB_ACQUISITION_FAILED"},
+                    "lineups": {"error": "FOTMOB_ACQUISITION_FAILED"},
+                    "h2h": {"error": "FOTMOB_ACQUISITION_FAILED"},
+                    "history": {"home": {"events": []}, "away": {"events": []}},
+                    "odds": {"1": {"error": "FOTMOB_ACQUISITION_FAILED"},
+                             "2": {"error": "FOTMOB_ACQUISITION_FAILED"}},
+                    "verification": {"events": [], "error": "INDEPENDENT_VERIFICATION_REQUIRED"},
+                    "final_results": {"sources": []},
+                    "data_trust": {"state": "QUARANTINED",
+                                   "hard_blocks": ["FOTMOB_ACQUISITION_FAILED"]},
+                    "retrieved_at": now,
+                }
+            try:
+                verification = await self.fusion.verify_futbol24()
+                final_results = await self.fusion.verify_final_results(verification)
+                bundle["verification"] = verification
+                bundle["final_results"] = final_results
+                event = bundle.get("event") or {}
+                eh = str((event.get("homeTeam") or {}).get("name") or "").strip().lower()
+                ea = str((event.get("awayTeam") or {}).get("name") or "").strip().lower()
+                observations = [{"source": "fotmob",
+                                 "retrieved_at": bundle.get("retrieved_at", time.time()),
+                                 "payload": event}]
+                for source_payload in final_results.get("sources", []) or []:
+                    source = str(source_payload.get("source") or "")
+                    for candidate in source_payload.get("events", []) or []:
+                        ch = str((candidate.get("homeTeam") or {}).get("name") or "").strip().lower()
+                        ca = str((candidate.get("awayTeam") or {}).get("name") or "").strip().lower()
+                        if eh and ea and eh == ch and ea == ca:
+                            observations.append({"source": source,
+                                                 "retrieved_at": source_payload.get("retrieved_at", time.time()),
+                                                 "payload": candidate})
+                trust = self.fusion.trust_mesh.evaluate(observations, {"now": time.time()})
+                trust.setdefault("hard_blocks", [])
+                for block in (bundle.get("data_trust") or {}).get("hard_blocks", []):
+                    if block not in trust["hard_blocks"]:
+                        trust["hard_blocks"].append(block)
+                trust["state"] = "QUARANTINED" if trust["hard_blocks"] else trust.get("state", "QUARANTINED")
+                bundle["data_trust"] = trust
+            except Exception as exc:
+                bundle["verification"] = {"events": [], "error": repr(exc)}
+                bundle["data_trust"] = {"state": "QUARANTINED",
+                                        "hard_blocks": ["TRUST_PIPELINE_ERROR"],
+                                        "error": repr(exc)}
+            return bundle
         p=self.fusion.primary
         base={}
         tasks={
