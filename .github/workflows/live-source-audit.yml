@@ -15,14 +15,20 @@ on:
       - ".github/workflows/live-source-audit.yml"
       - "scripts/live_source_smoke.py"
       - "feed_fusion.py"
+      - "data_trust_mesh.py"
+      - "match_acquisition.py"
       - "*_adapter.py"
+      - "tests/**"
       - "requirements.txt"
   pull_request:
     paths:
       - ".github/workflows/live-source-audit.yml"
       - "scripts/live_source_smoke.py"
       - "feed_fusion.py"
+      - "data_trust_mesh.py"
+      - "match_acquisition.py"
       - "*_adapter.py"
+      - "tests/**"
       - "requirements.txt"
 
 permissions:
