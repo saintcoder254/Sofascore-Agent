@@ -16,7 +16,7 @@ from collections import defaultdict
 def _canonical_team_name(value):
     """Normalize harmless provider naming variants without fuzzy substring matching."""
     value = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode().lower()
-    value = re.sub(r"\\b(fc|sc|cf|afc|sk|fk|club|football|soccer)\\b", " ", value)
+    value = re.sub(r"\b(fc|sc|cf|afc|sk|fk|club|football|soccer)\b", " ", value)
     return re.sub(r"[^a-z0-9]", "", value)
 
 
