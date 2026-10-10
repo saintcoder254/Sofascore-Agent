@@ -80,6 +80,29 @@ class TestQualifierFailClosed(unittest.TestCase):
         self.assertEqual(result["state"], "NO_BET")
         self.assertIn("MATCH_STATE_UNKNOWN_OR_INELIGIBLE", result["blockers"])
 
+    def test_live_and_terminal_states_fail_closed(self):
+        # Only explicit pre-match states may proceed to probability analysis.
+        for state in (
+            "inprogress", "in_progress", "live", "1sthalf", "2ndhalf",
+            "halftime", "paused", "finished", "completed", "final",
+            "post", "cancelled", "postponed", "abandoned", "suspended", "",
+        ):
+            with self.subTest(state=state):
+                evidence = copy.deepcopy(self.evidence)
+                evidence["event"]["status"]["type"]["state"] = state
+                result = self.q.qualify("fixture-1", evidence, now=self.now)
+                self.assertEqual(result["state"], "NO_BET")
+                self.assertFalse(result["checks"]["pre_match_state"])
+                self.assertIn("MATCH_STATE_UNKNOWN_OR_INELIGIBLE", result["blockers"])
+
+    def test_explicit_pre_match_states_are_allowlisted(self):
+        for state in ("notstarted", "not_started", "not started", "scheduled", "upcoming", "created"):
+            with self.subTest(state=state):
+                evidence = copy.deepcopy(self.evidence)
+                evidence["event"]["status"]["type"]["state"] = state
+                result = self.q.qualify("fixture-1", evidence, now=self.now)
+                self.assertTrue(result["checks"]["pre_match_state"])
+
     def test_unrelated_verification_events_do_not_count(self):
         evidence = copy.deepcopy(self.evidence)
         for source in evidence["final_results"]["sources"]:
