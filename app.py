@@ -24,6 +24,7 @@ from omega_promotion_gate import OmegaPromotionGate
 from oos_model_tournament import OOSModelTournament
 from league_intelligence_engine import LeagueIntelligenceEngine
 from case_database import CaseDatabaseManager
+from engine_integration_bot import EngineIntegrationBot
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger=logging.getLogger("emm.poller")
@@ -39,6 +40,7 @@ omega_weights=OmegaWeightEngine(min_samples=int(os.getenv("OMEGA_WEIGHT_MIN_SAMP
 omega_calibration=CalibrationPipeline(min_train=int(os.getenv("OMEGA_CAL_MIN_TRAIN","50")),min_test=int(os.getenv("OMEGA_CAL_MIN_TEST","20")))
 omega_promotion=OmegaPromotionGate(min_samples=int(os.getenv("OMEGA_PROMOTION_MIN_SAMPLES","100")),min_clv_samples=int(os.getenv("OMEGA_PROMOTION_MIN_CLV","20")))
 omega_leagues=LeagueIntelligenceEngine(min_samples=int(os.getenv("OMEGA_LEAGUE_MIN_SAMPLES","30")),proven_samples=int(os.getenv("OMEGA_LEAGUE_PROVEN_SAMPLES","100")))
+engine_integration_bot=EngineIntegrationBot()
 state={"last_poll":None,"last_success":None,"last_error":None,"last_poll_duration_ms":None,"last_poll_items":0,"polls_total":0,"polls_success":0,"polls_failed":0,"consecutive_failures":0,"next_poll_at":None,"items":0,"running":False,"evolution_running":False,"last_evolution_at":None,"research_running":False,"last_research_at":None,"learning_running":False,"last_learning_at":None,"source_learning_running":False,"last_source_learning_at":None,"verification_learning_running":False,"last_verification_learning_at":None,"enrichment_running":False,"last_enrichment_at":None,"enrichment_items":0,"auto_analyze_items":0,"last_auto_analyze_at":None,"arbiter_passes":0,"arbiter_blocks":0,"active_source":None}
 class PredictionIn(BaseModel):
     prediction_id:str=Field(default_factory=lambda:str(uuid.uuid4())); fixture_id:str; market:str; predicted_probability:float=Field(ge=0,le=1); selection:str|None=None; odds:float|None=Field(default=None,gt=1); model_version:str="unknown"; features:dict=Field(default_factory=dict)
@@ -260,12 +262,13 @@ async def analyze_fixture(event_id:str):
     analysis=core.analyze(event_id,bundle,gate)
     prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
     arbiter_decision=arbiter.decide(event,bundle,gate,prediction)
+    integration_report=engine_integration_bot.audit(probability_engine=probability,prediction=prediction,analysis=analysis,qualification=gate,arbiter=arbiter_decision)
     case_summary=_persist_case_analysis(event_id,bundle,prediction,arbiter_decision)
     if arbiter_decision.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
         sel=prediction["selection"]
         stable=hashlib.sha256((str(event_id)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-MarketSpecific-v3").encode()).hexdigest()
         store.add_prediction(prediction_id=stable,fixture_id=event_id,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-MarketSpecific-v3",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
-    return {"engine":"Elite MatchMaster UMIOS TITAN","fixture_id":event_id,"qualification":gate,"analysis":analysis,"prediction":prediction,"arbiter":arbiter_decision,"case_database":case_summary,"evidence":bundle if gate["state"]=="QUALIFIED" else {"event":bundle.get("event"),"odds":bundle.get("odds"),"verification":bundle.get("verification"),"retrieved_at":bundle.get("retrieved_at")},"prediction_status":arbiter_decision.get("state","NO_BET"),"generated_at":time.time()}
+    return {"engine":"Elite MatchMaster UMIOS TITAN","fixture_id":event_id,"qualification":gate,"analysis":analysis,"prediction":prediction,"arbiter":arbiter_decision,"engine_integration":integration_report,"case_database":case_summary,"evidence":bundle if gate["state"]=="QUALIFIED" else {"event":bundle.get("event"),"odds":bundle.get("odds"),"verification":bundle.get("verification"),"retrieved_at":bundle.get("retrieved_at")},"prediction_status":arbiter_decision.get("state","NO_BET"),"generated_at":time.time()}
 
 
 def _persist_case_analysis(event_id, bundle, prediction, arbiter_decision):
