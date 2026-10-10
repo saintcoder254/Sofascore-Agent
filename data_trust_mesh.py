@@ -36,7 +36,14 @@ class ProvenanceAgent(TrustAgent):
                 invalid.append({"source": source, "reason": "INVALID_RETRIEVED_AT"})
                 continue
             canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-            valid.append({**o, "payload_hash": hashlib.sha256(canonical.encode()).hexdigest()})
+            # Keep provenance reports acyclic. Retaining the original payload here
+            # creates a reference loop when callers attach this trust envelope to
+            # the same event object used as an observation payload.
+            valid.append({
+                "source": source,
+                "retrieved_at": ts,
+                "payload_hash": hashlib.sha256(canonical.encode()).hexdigest(),
+            })
         return {"state": "PASS" if valid and not invalid else ("CAUTION" if valid else "BLOCK"),
                 "valid": valid, "invalid": invalid}
 
