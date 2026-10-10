@@ -1,0 +1,35 @@
+name: SofaScore 403 diagnostic swarm
+
+on:
+  workflow_dispatch:
+    inputs:
+      timeout_seconds:
+        description: "Timeout per provider request (3–25 seconds)"
+        required: false
+        default: "12"
+        type: string
+  push:
+    branches:
+      - "feat/manual-live-source-audit"
+    paths:
+      - "scripts/sofascore_403_swarm.py"
+      - ".github/workflows/sofascore-403-swarm.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic-swarm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install repository dependencies
+        run: pip install -r requirements.txt
+      - name: Run parallel live diagnostics
+        env:
+          SOFASCORE_SWARM_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds || '12' }}
+        run: python scripts/sofascore_403_swarm.py
