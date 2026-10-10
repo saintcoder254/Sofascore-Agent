@@ -33,10 +33,10 @@ services:
       - key: ENRICH_SECONDS
         value: "300"
       - key: ENRICH_MAX_FIXTURES
-        value: "8"
+        value: "2"
       - key: AUTO_ANALYZE
-        value: "1"
+        value: "0"
       - key: AUTO_ANALYZE_MAX
-        value: "8"
+        value: "1"
       - key: MONTE_CARLO_SAMPLES
         value: "10000"

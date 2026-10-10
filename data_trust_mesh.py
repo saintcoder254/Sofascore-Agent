@@ -35,10 +35,31 @@ class ProvenanceAgent(TrustAgent):
             except (TypeError, ValueError):
                 invalid.append({"source": source, "reason": "INVALID_RETRIEVED_AT"})
                 continue
-            canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-            # Keep provenance reports acyclic. Retaining the original payload here
-            # creates a reference loop when callers attach this trust envelope to
-            # the same event object used as an observation payload.
+            # Hash a bounded, acyclic snapshot. Provider payloads can contain
+            # self-references or a previously attached data_trust envelope; neither
+            # belongs in the provenance hash and both can break JSON serialization.
+            def safe_snapshot(value, ancestors=None):
+                ancestors = set() if ancestors is None else ancestors
+                if isinstance(value, dict):
+                    identity = id(value)
+                    if identity in ancestors:
+                        return "[CIRCULAR_REFERENCE]"
+                    next_ancestors = ancestors | {identity}
+                    return {
+                        str(k): safe_snapshot(v, next_ancestors)
+                        for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+                        if str(k) not in {"data_trust", "raw_source_payload"}
+                    }
+                if isinstance(value, (list, tuple)):
+                    identity = id(value)
+                    if identity in ancestors:
+                        return "[CIRCULAR_REFERENCE]"
+                    next_ancestors = ancestors | {identity}
+                    return [safe_snapshot(v, next_ancestors) for v in value]
+                if value is None or isinstance(value, (str, int, float, bool)):
+                    return value
+                return str(value)
+            canonical = json.dumps(safe_snapshot(payload), sort_keys=True, separators=(",", ":"), default=str)
             valid.append({
                 "source": source,
                 "retrieved_at": ts,

@@ -17,16 +17,20 @@ class UMIOSAdversarialLayer:
 
     def evaluate(self,prediction,evidence,gate):
         blockers=[]; warnings=[]
-        if gate.get("state")!="QUALIFIED": blockers.append("QUALIFICATION_BLOCKED")
+        gate = gate if isinstance(gate, dict) else {}
+        gate_checks = gate.get("checks") if isinstance(gate.get("checks"), dict) else {}
+        required_gate_checks = {"event", "lineups", "statistics", "incidents", "freshness", "pre_match_state", "fixture_identity", "market_data", "lineup_signal", "statistics_signal", "incidents_schema", "external_verification", "trusted_evidence"}
+        if gate.get("state") != "QUALIFIED" or gate.get("blockers") != [] or not required_gate_checks.issubset(gate_checks) or any(gate_checks.get(k) is not True for k in required_gate_checks):
+            blockers.append("QUALIFICATION_BLOCKED")
         if gate.get("freshness_age_seconds") is None or gate.get("freshness_age_seconds",999999)>180: blockers.append("STALE_EVIDENCE")
         if gate.get("checks",{}).get("external_verification") is not True: blockers.append("EXTERNAL_VERIFICATION_MISSING")
         event=evidence.get("event") or {}
         status=((event.get("status") or {}).get("type") or {}).get("state")
-        if str(status or "").lower() in {"finished","completed","final","cancelled","postponed","abandoned","suspended"}: blockers.append("MATCH_STATE_INVALID")
+        if str(status or "").strip().lower() not in {"notstarted","not_started","not started","scheduled","upcoming","created"}: blockers.append("MATCH_STATE_UNKNOWN_OR_INELIGIBLE")
         verification=evidence.get("verification") or {}
         if verification.get("conflict") or evidence.get("verification_conflicts"): blockers.append("SOURCE_CONFLICT")
         trust=evidence.get("data_trust") or {}
-        if trust and trust.get("state")!="TRUSTED": blockers.append("DATA_TRUST_"+str(trust.get("state","MISSING")))
+        if not isinstance(trust, dict) or trust.get("state") != "TRUSTED" or trust.get("hard_blocks"): blockers.append("DATA_TRUST_NOT_TRUSTED")
         sel=prediction.get("selection") or {}
         edge=self._num(sel.get("edge")) or 0
         ev=self._num(sel.get("expected_value")) or 0
@@ -100,6 +104,13 @@ class UMIOSFinalArbiter:
         self.double_chance_gate=DoubleChanceFailureGate()
 
     def decide(self,event,evidence,gate,prediction):
+        gate = gate if isinstance(gate, dict) else {}
+        gate_checks = gate.get("checks") if isinstance(gate.get("checks"), dict) else {}
+        required_gate_checks = {"event", "lineups", "statistics", "incidents", "freshness", "pre_match_state", "fixture_identity", "market_data", "lineup_signal", "statistics_signal", "incidents_schema", "external_verification", "trusted_evidence"}
+        if gate.get("state") != "QUALIFIED" or gate.get("blockers") != [] or not required_gate_checks.issubset(gate_checks) or any(gate_checks.get(k) is not True for k in required_gate_checks):
+            return {"state":"NO_BET","reason":"qualification_gate_blocked",
+                    "challenge":{"state":"BLOCK","blockers":["QUALIFICATION_BLOCKED"]},
+                    "prediction":prediction}
         if prediction.get("state")!="QUALIFIED_PREDICTION":
             return {"state":"NO_BET","reason":"probability_engine_rejected","prediction":prediction}
         specialist=self.specialists.evaluate(event,evidence,prediction)
