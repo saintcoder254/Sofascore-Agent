@@ -117,7 +117,7 @@ class FotMobAdapter:
         try:
             response = await self.client.get(
                 self.BASE,
-                params={"type": "matches", "date": day},
+                params={"date": day.replace("-", "")},
             )
             self.metrics["last_status_code"] = response.status_code
             response.raise_for_status()
