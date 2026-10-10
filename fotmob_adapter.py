@@ -115,8 +115,10 @@ class FotMobAdapter:
         """Fetch and normalize FotMob fixtures for an explicit UTC calendar date."""
         self.metrics["attempts"] += 1
         try:
+            # Current public match-list route is /api/data/matches.
+            # /api/data?date=... returns 404 and must not be treated as a feed.
             response = await self.client.get(
-                self.BASE,
+                f"{self.BASE}/matches",
                 params={"date": day.replace("-", "")},
             )
             self.metrics["last_status_code"] = response.status_code
