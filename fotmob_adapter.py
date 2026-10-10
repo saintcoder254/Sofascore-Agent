@@ -117,7 +117,7 @@ class FotMobAdapter:
         try:
             response = await self.client.get(
                 self.BASE,
-                params={"type": "matches", "date": day},
+                params={"date": day.replace("-", "")},
             )
             self.metrics["last_status_code"] = response.status_code
             response.raise_for_status()
@@ -148,6 +148,102 @@ class FotMobAdapter:
     async def close(self):
         await self.client.aclose()
 
+
+
+    async def team_details(self, team_id):
+        """Fetch source-tagged FotMob team data used to derive recent-match history."""
+        if team_id is None or not str(team_id).strip():
+            raise ValueError("FotMob team_id is required")
+        response = await self.client.get(
+            f"{self.BASE}/teams",
+            params={"id": str(team_id), "ccode3": "KEN"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("FotMob team endpoint returned invalid JSON shape")
+        return {"source": "fotmob", "team_id": str(team_id),
+                "retrieved_at": time.time(), "raw_payload": payload}
+
+    @staticmethod
+    def normalize_team_history(result, team_id):
+        """Extract recent fixtures conservatively from a source-tagged team response."""
+        if not isinstance(result, dict) or result.get("source") != "fotmob":
+            raise ValueError("FotMob source-tagged team details are required")
+        raw = result.get("raw_payload") or {}
+        candidates = []
+        def walk(node, depth=0):
+            if depth > 5:
+                return
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key.lower() in {"fixtures", "matches", "lastmatches", "recentmatches"} and isinstance(value, list):
+                        candidates.extend(x for x in value if isinstance(x, dict))
+                    elif isinstance(value, (dict, list)):
+                        walk(value, depth + 1)
+            elif isinstance(node, list):
+                for value in node:
+                    if isinstance(value, (dict, list)):
+                        walk(value, depth + 1)
+        walk(raw)
+        events = []
+        seen = set()
+        for item in candidates:
+            normalized = FotMobAdapter._normalize_event(item)
+            eid = normalized.get("source_event_id")
+            if not eid or eid in seen:
+                continue
+            seen.add(eid)
+            home_id = str((normalized.get("homeTeam") or {}).get("id") or "")
+            away_id = str((normalized.get("awayTeam") or {}).get("id") or "")
+            if str(team_id) not in (home_id, away_id):
+                continue
+            events.append(normalized)
+        return {"source": "fotmob", "team_id": str(team_id), "events": events[:20],
+                "retrieved_at": result.get("retrieved_at", time.time()),
+                **({"error": "FOTMOB_TEAM_HISTORY_UNAVAILABLE"} if not events else {})}
+
+    async def external_odds(self, home_name, away_name, commence_time=None):
+        """Query The Odds API only when explicitly configured; never synthesize prices."""
+        import os
+        import re
+        api_key = os.getenv("THE_ODDS_API_KEY")
+        sport_key = os.getenv("ODDS_API_SPORT_KEY", "soccer_austria_bundesliga")
+        if not api_key:
+            return {"source": "the_odds_api", "markets": [],
+                    "error": "THE_ODDS_API_KEY_NOT_CONFIGURED", "retrieved_at": time.time()}
+        response = await self.client.get(
+            "https://api.the-odds-api.com/v4/sports/" + sport_key + "/odds/",
+            params={"apiKey": api_key, "regions": os.getenv("ODDS_API_REGIONS", "eu"),
+                    "markets": "h2h", "oddsFormat": "decimal"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        def canon(value):
+            return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+        target_home, target_away = canon(home_name), canon(away_name)
+        def same(a, b):
+            return bool(a and b and (a == b or a in b or b in a))
+        matches = []
+        for fixture in payload if isinstance(payload, list) else []:
+            h, a = canon(fixture.get("home_team")), canon(fixture.get("away_team"))
+            if not (same(target_home, h) and same(target_away, a)):
+                continue
+            for bookmaker in fixture.get("bookmakers", []) or []:
+                for market in bookmaker.get("markets", []) or []:
+                    if market.get("key") != "h2h":
+                        continue
+                    outcomes = [{"name": o.get("name"), "odds": o.get("price"),
+                                 "decimalValue": o.get("price")}
+                                for o in market.get("outcomes", []) or []
+                                if isinstance(o.get("price"), (int, float)) and o.get("price") > 1]
+                    if outcomes:
+                        matches.append({"source": "the_odds_api", "bookmaker": bookmaker.get("key"),
+                                        "market": "h2h", "choices": outcomes,
+                                        "commence_time": fixture.get("commence_time"),
+                                        "event_id": fixture.get("id")})
+        return {"source": "the_odds_api", "markets": matches, "retrieved_at": time.time(),
+                **({"error": "ODDS_FIXTURE_NOT_FOUND"} if not matches else {})}
 
     @staticmethod
     def normalize_match_details(result):
