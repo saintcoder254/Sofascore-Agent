@@ -23,6 +23,26 @@ class TestDataTrustMesh(unittest.TestCase):
         self.assertIn('"data_trust"', encoded)
         self.assertNotIn('"payload": {"homeTeam"', encoded)
 
+    def test_cyclic_or_pre_enriched_payload_does_not_break_provenance_hashing(self):
+        event = {"homeTeam": {"name": "A", "score": 1},
+                 "awayTeam": {"name": "B", "score": 0},
+                 "status": {"type": {"state": "finished"}}}
+        event["self"] = event
+        event["data_trust"] = {"old": "envelope"}
+        other = {"homeTeam": {"name": "A", "score": 1},
+                 "awayTeam": {"name": "B", "score": 0},
+                 "status": {"type": {"state": "finished"}}}
+        envelope = DataTrustMesh().evaluate([
+            {"source": "sofascore", "retrieved_at": time.time(), "payload": event},
+            {"source": "espn", "retrieved_at": time.time(), "payload": other},
+        ])
+        self.assertEqual(envelope["state"], "TRUSTED")
+        self.assertTrue(envelope["provenance"][0]["payload_hash"])
+        self.assertNotIn("payload", envelope["reports"]["provenance"]["valid"][0])
+        event["data_trust"] = envelope
+        event.pop("self")
+        json.dumps(event, sort_keys=True, separators=(",", ":"))
+
     def test_two_independent_agreeing_sources_are_trusted(self):
         out=DataTrustMesh().evaluate([obs("sofascore"),obs("fotmob")])
         self.assertEqual(out["state"],"TRUSTED")
