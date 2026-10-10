@@ -27,7 +27,7 @@ from case_database import CaseDatabaseManager
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger=logging.getLogger("emm.poller")
-POLL_SECONDS=int(os.getenv("POLL_SECONDS","60")); STALE_AFTER=int(os.getenv("STALE_AFTER_SECONDS","180")); BASE=os.getenv("SOFASCORE_BASE","https://www.sofascore.com/api/v1"); DB=os.getenv("DATABASE_PATH","matchmaster.db"); CASE_DB_DIR=os.getenv("CASE_DATABASE_DIR","case_databases"); TIMEOUT=float(os.getenv("HTTP_TIMEOUT_SECONDS","15")); EVOLUTION_SECONDS=int(os.getenv("EVOLUTION_SECONDS","21600")); EVOLUTION_MIN_SAMPLES=int(os.getenv("EVOLUTION_MIN_SAMPLES","100")); RESEARCH_SECONDS=int(os.getenv("RESEARCH_SECONDS","21600")); LEARNING_SECONDS=int(os.getenv("LEARNING_SECONDS","300")); SOURCE_LEARNING_SECONDS=int(os.getenv("SOURCE_LEARNING_SECONDS","300")); SOURCE_MIN_SAMPLES=int(os.getenv("SOURCE_MIN_SAMPLES","100")); VERIFICATION_SECONDS=int(os.getenv("VERIFICATION_SECONDS","300")); VERIFICATION_MIN_SOURCES=int(os.getenv("VERIFICATION_MIN_SOURCES","2")); ENRICH_SECONDS=int(os.getenv("ENRICH_SECONDS","300")); ENRICH_MAX_FIXTURES=int(os.getenv("ENRICH_MAX_FIXTURES","8")); AUTO_ANALYZE=os.getenv("AUTO_ANALYZE","1")=="1"; AUTO_ANALYZE_MAX=int(os.getenv("AUTO_ANALYZE_MAX","8"))
+POLL_SECONDS=int(os.getenv("POLL_SECONDS","60")); STALE_AFTER=int(os.getenv("STALE_AFTER_SECONDS","180")); BASE=os.getenv("SOFASCORE_BASE","https://www.sofascore.com/api/v1"); DB=os.getenv("DATABASE_PATH","matchmaster.db"); CASE_DB_DIR=os.getenv("CASE_DATABASE_DIR","case_databases"); TIMEOUT=float(os.getenv("HTTP_TIMEOUT_SECONDS","15")); EVOLUTION_SECONDS=int(os.getenv("EVOLUTION_SECONDS","21600")); EVOLUTION_MIN_SAMPLES=int(os.getenv("EVOLUTION_MIN_SAMPLES","100")); RESEARCH_SECONDS=int(os.getenv("RESEARCH_SECONDS","21600")); LEARNING_SECONDS=int(os.getenv("LEARNING_SECONDS","300")); SOURCE_LEARNING_SECONDS=int(os.getenv("SOURCE_LEARNING_SECONDS","300")); SOURCE_MIN_SAMPLES=int(os.getenv("SOURCE_MIN_SAMPLES","100")); VERIFICATION_SECONDS=int(os.getenv("VERIFICATION_SECONDS","300")); VERIFICATION_MIN_SOURCES=int(os.getenv("VERIFICATION_MIN_SOURCES","2")); ENRICH_SECONDS=int(os.getenv("ENRICH_SECONDS","300")); ENRICH_MAX_FIXTURES=int(os.getenv("ENRICH_MAX_FIXTURES","8")); AUTO_ANALYZE=os.getenv("AUTO_ANALYZE","1")=="1"; AUTO_ANALYZE_MAX=int(os.getenv("AUTO_ANALYZE_MAX","8")); OMEGA_PRODUCTION_ENABLED=os.getenv("OMEGA_PRODUCTION_ENABLED","0")=="1"
 adapter=FeedFusionAdapter(BASE,TIMEOUT); store=Store(DB); case_databases=CaseDatabaseManager(CASE_DB_DIR); fresh=FreshnessGate(STALE_AFTER); conflict=ConflictGate(); evolution=EvolutionAgent(store,EVOLUTION_MIN_SAMPLES); research=ResearchEngine(store); learning=ClosedLoopLearning(store,evolution); source_learning=SourceLearningAgent(store,SOURCE_MIN_SAMPLES); odds=OddsIntelligenceAgent(store); verifier=ResultVerifierAgent(); verification_learning=VerificationLearningAgent(store,verifier,VERIFICATION_MIN_SOURCES)
 acquisition=MatchAcquisitionEngine(adapter)
 qualifier=UMIOSQualifier(STALE_AFTER)
@@ -36,8 +36,8 @@ probability=UMIOSProbabilityEngine()
 arbiter=UMIOSFinalArbiter(store)
 incident_audit=TitanIncidentAudit()
 omega_weights=OmegaWeightEngine(min_samples=int(os.getenv("OMEGA_WEIGHT_MIN_SAMPLES","50")))
-omega_calibration=CalibrationPipeline(min_train=int(os.getenv("OMEGA_CAL_MIN_TRAIN","50")),min_test=int(os.getenv("OMEGA_CAL_MIN_TEST","20")))
-omega_promotion=OmegaPromotionGate(min_samples=int(os.getenv("OMEGA_PROMOTION_MIN_SAMPLES","100")),min_clv_samples=int(os.getenv("OMEGA_PROMOTION_MIN_CLV","20")))
+omega_calibration=CalibrationPipeline(min_train=int(os.getenv("OMEGA_CAL_MIN_TRAIN","175")),min_test=int(os.getenv("OMEGA_CAL_MIN_TEST","250")))
+omega_promotion=OmegaPromotionGate(min_samples=int(os.getenv("OMEGA_PROMOTION_MIN_SAMPLES","250")),min_clv_samples=int(os.getenv("OMEGA_PROMOTION_MIN_CLV","50")))
 omega_leagues=LeagueIntelligenceEngine(min_samples=int(os.getenv("OMEGA_LEAGUE_MIN_SAMPLES","30")),proven_samples=int(os.getenv("OMEGA_LEAGUE_PROVEN_SAMPLES","100")))
 state={"last_poll":None,"last_success":None,"last_error":None,"last_poll_duration_ms":None,"last_poll_items":0,"polls_total":0,"polls_success":0,"polls_failed":0,"consecutive_failures":0,"next_poll_at":None,"items":0,"running":False,"evolution_running":False,"last_evolution_at":None,"research_running":False,"last_research_at":None,"learning_running":False,"last_learning_at":None,"source_learning_running":False,"last_source_learning_at":None,"verification_learning_running":False,"last_verification_learning_at":None,"enrichment_running":False,"last_enrichment_at":None,"enrichment_items":0,"auto_analyze_items":0,"last_auto_analyze_at":None,"arbiter_passes":0,"arbiter_blocks":0,"active_source":None}
 class PredictionIn(BaseModel):
@@ -45,6 +45,26 @@ class PredictionIn(BaseModel):
 class PredictionBatchIn(BaseModel): predictions:list[PredictionIn]=Field(min_length=1,max_length=500)
 class OutcomeIn(BaseModel): outcome:float=Field(ge=0,le=1)
 class ClosingOddsIn(BaseModel): closing_odds:float=Field(gt=1); closing_at:float|None=None; closing_source:str|None=None
+
+def _omega_promotion_status():
+    """Single production lock: OOS + calibration + integrity + earned weight + CLV must all pass."""
+    ledger=store.calibration_ledger()
+    calibration=omega_calibration.run(ledger)
+    weights=omega_weights.evaluate(ledger)
+    benchmark=store.market_benchmark_report()
+    oos=OOSModelTournament(
+        min_train=int(os.getenv("OMEGA_OOS_MIN_TRAIN","175")),
+        min_test=int(os.getenv("OMEGA_OOS_MIN_TEST","250")),
+    ).run(store.oos_tournament_ledger())
+    promotion=omega_promotion.evaluate(
+        ledger, store.verify_prediction_ledger(), calibration, weights, benchmark, oos=oos
+    )
+    return {"calibration":calibration,"weights":weights,"market_benchmark":benchmark,"oos":oos,"promotion_gate":promotion}
+
+def _production_allowed():
+    status=_omega_promotion_status()
+    return bool(OMEGA_PRODUCTION_ENABLED and status["promotion_gate"].get("state")=="PROMOTE"), status
+
 async def poll_once():
     started=time.perf_counter(); state["last_poll"]=time.time(); state["polls_total"]+=1; poll_no=state["polls_total"]
     try:
@@ -126,6 +146,10 @@ async def enrichment_loop():
                     if gate.get("state")!="QUALIFIED": continue
                     prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
                     arb=arbiter.decide(event,bundle,gate,prediction)
+                    if arb.get("state")=="FINAL_QUALIFIED":
+                        production_allowed, production_status=_production_allowed()
+                        if not production_allowed:
+                            arb={"state":"NO_BET","reason":"PRODUCTION_LOCKED_UNTIL_OMEGA_PROMOTION","promotion_gate":production_status["promotion_gate"],"oos":production_status["oos"]}
                     _persist_case_analysis(eid,bundle,prediction,arb)
                     if arb.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
                         sel=prediction["selection"]
@@ -186,12 +210,13 @@ async def record_closing_odds(prediction_id:str,item:ClosingOddsIn):
     return {"ok":True,"prediction_id":prediction_id,"closing_odds":item.closing_odds,"closing_at":item.closing_at or time.time(),"closing_source":item.closing_source}
 @app.get("/learning/omega/oos")
 async def omega_oos():
-    return OOSModelTournament(min_train=int(os.getenv("OMEGA_OOS_MIN_TRAIN","50")),min_test=int(os.getenv("OMEGA_OOS_MIN_TEST","20"))).run(store.oos_tournament_ledger())
+    return OOSModelTournament(min_train=int(os.getenv("OMEGA_OOS_MIN_TRAIN","175")),min_test=int(os.getenv("OMEGA_OOS_MIN_TEST","250"))).run(store.oos_tournament_ledger())
 
 @app.get("/learning/omega")
 async def omega_learning_status():
     ledger=store.calibration_ledger()
-    return {"agent":"OMEGA Calibration + Evidence-Earned Weight Engine","ledger_samples":len(ledger),"ledger_integrity":store.verify_prediction_ledger(),"calibration":omega_calibration.run(ledger),"weights":omega_weights.evaluate(ledger),"market_benchmark":store.market_benchmark_report(),"promotion_gate":omega_promotion.evaluate(ledger,store.verify_prediction_ledger(),omega_calibration.run(ledger),omega_weights.evaluate(ledger),store.market_benchmark_report()),"live_reweighting_enabled":False}
+    status=_omega_promotion_status()
+    return {"agent":"OMEGA Calibration + Evidence-Earned Weight Engine","ledger_samples":len(ledger),"ledger_integrity":store.verify_prediction_ledger(),**status,"live_reweighting_enabled":False,"production_enabled":OMEGA_PRODUCTION_ENABLED}
 
 @app.post("/learning/omega/run")
 async def omega_learning_run():
@@ -260,6 +285,10 @@ async def analyze_fixture(event_id:str):
     analysis=core.analyze(event_id,bundle,gate)
     prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
     arbiter_decision=arbiter.decide(event,bundle,gate,prediction)
+    if arbiter_decision.get("state")=="FINAL_QUALIFIED":
+        production_allowed, production_status=_production_allowed()
+        if not production_allowed:
+            arbiter_decision={"state":"NO_BET","reason":"PRODUCTION_LOCKED_UNTIL_OMEGA_PROMOTION","promotion_gate":production_status["promotion_gate"],"oos":production_status["oos"]}
     case_summary=_persist_case_analysis(event_id,bundle,prediction,arbiter_decision)
     if arbiter_decision.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
         sel=prediction["selection"]

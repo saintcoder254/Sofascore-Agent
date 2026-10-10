@@ -85,3 +85,27 @@ The hardening layer also includes:
 - `docs/UMIOS_TITAN_10_POINT_HARDENING.md` documenting the ten corrective controls.
 
 The model deliberately prefers NO_BET when the probability model, evidence regime or sample depth is inadequate. Monte Carlo sample count is a simulation parameter, not a substitute for correct model specification.
+
+
+## Basketball OMEGA v3 — possession x efficiency hardening
+
+The dedicated basketball engine now uses a possession x efficiency model whenever at least five recent games per team contain explicit box-score inputs sufficient to estimate possessions. Possessions use the standard FGA - ORB + TO + 0.44 x FTA approximation only when all required components are present. Offensive and defensive efficiency are then blended with opponent evidence, with a 25% score-form anchor to limit small-sample instability.
+
+When possession inputs are unavailable, the engine explicitly falls back to the score-form path. It does not infer possessions from unrelated statistics. Every prediction reports model_path, expected_possessions, efficiency diagnostics, and the number of efficiency-supported games.
+
+Production promotion is now hard-gated at a minimum of 250 resolved observations and requires market-specific expanding walk-forward OOS evidence with at least two forward test windows of 250 observations each, a calibration pass, ledger integrity, an earned model weight, and verified positive CLV. CLV is never treated as optional or neutral. Market benchmark evidence is also checked at the same market granularity as the OOS result.
+
+A separate production lock is enforced in the application. OMEGA_PRODUCTION_ENABLED defaults to false, and a prediction cannot be persisted as production-qualified unless both that switch and the strict promotion gate are satisfied. Analysis may therefore remain NO_BET/SHADOW while the historical corpus is being accumulated.
+
+These thresholds are gates, not proof of profitability. The repository still requires genuine chronological evidence, positive market benchmark/CLV evidence, integrity checks, and post-match verification before production promotion.
+
+
+## Basketball OMEGA v4 — swarm hardening: walk-forward + production lock
+
+The OOS tournament now evaluates each model/market pair independently using expanding chronological windows. Pooled multi-market results cannot satisfy a market-specific promotion gate. Calibration uses the same forward-only principle and never learns a calibration transform from future outcomes.
+
+The production path is wired through one promotion lock: chronological OOS, calibration, ledger integrity, earned model status, and market-specific positive CLV must all agree before production persistence is allowed. This closes the previous gap where downstream artifacts could appear healthy without being explicitly linked to OOS evidence.
+
+## Basketball post-match hardening: score-form fallback is shadow-only
+
+The basketball engine may retain a score-form fallback for diagnostics when verified possession/efficiency inputs are unavailable. That fallback is explicitly marked `production_eligible=false` and cannot produce a `QUALIFIED_PREDICTION`. Production selection requires the possession x efficiency path to be supported, in addition to the repository's calibration, chronological OOS, integrity, market benchmark, and CLV gates. Recent-score form is therefore evidence for analysis, not a substitute for validated possession/efficiency modeling.
