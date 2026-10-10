@@ -360,20 +360,53 @@ def _resolve_today_fixture(events, home: str, away: str):
 
 
 async def _find_fixture_across_dates(home: str, away: str):
-    """Search nearby SofaScore scheduled-event dates if today's feed misses a match."""
+    """Resolve a fixture across independent date feeds; never treat discovery as analysis evidence."""
     import datetime
     today = datetime.datetime.now(datetime.timezone.utc).date()
     errors = []
-    # Try a small bounded window around UTC today; current-day lookup remains first.
-    for offset in (1, -1, 2, -2, 3, -3):
+    # SofaScore remains first choice. The alternate feeds are attempted even when
+    # SofaScore returns HTTP 200 but omits the requested event.
+    for offset in (0, 1, -1, 2, -2, 3, -3):
         day = (today + datetime.timedelta(days=offset)).isoformat()
         try:
             payload = await adapter.primary.get_json(f"/sport/football/scheduled-events/{day}")
             found = _resolve_today_fixture(payload.get("events", []), home, away)
             if found:
+                found = dict(found)
+                found["source"] = "sofascore"
                 return found, day, errors
         except Exception as exc:
-            errors.append({"date": day, "error": repr(exc)})
+            errors.append({"date": day, "source": "sofascore", "error": repr(exc)})
+
+        # FotMob is an independent fixture-discovery source. A FotMob event ID
+        # is NOT a SofaScore ID; the gateway must not send it to SofaScore APIs.
+        try:
+            payload = await adapter.fotmob.events_for_date(day)
+            found = _resolve_today_fixture(payload.get("events", []), home, away)
+            if found:
+                found = dict(found)
+                found["source"] = "fotmob"
+                found["resolution_only"] = True
+                return found, day, errors
+        except Exception as exc:
+            errors.append({"date": day, "source": "fotmob", "error": repr(exc)})
+
+        # ESPN scoreboard is another independent discovery path. Keep its source
+        # identity and fail closed if no native SofaScore event can be acquired.
+        try:
+            response = await adapter.fallback_client.get(
+                adapter.ESPN_BASE, params={"dates": day.replace("-", "")}
+            )
+            response.raise_for_status()
+            payload = adapter._normalize_espn(response.json())
+            found = _resolve_today_fixture(payload.get("events", []), home, away)
+            if found:
+                found = dict(found)
+                found["source"] = "espn"
+                found["resolution_only"] = True
+                return found, day, errors
+        except Exception as exc:
+            errors.append({"date": day, "source": "espn", "error": repr(exc)})
     return None, None, errors
 
 async def _run_fixture_analysis(event_id: str):
@@ -408,6 +441,30 @@ async def analyze_match_gateway(item: MatchGatewayIn):
     date_errors = []
     if not event:
         event, resolved_date, date_errors = await _find_fixture_across_dates(item.home, item.away)
+    if event and event.get("resolution_only"):
+        # A secondary feed can prove that a fixture exists, but its identifier
+        # cannot be passed to the SofaScore-only evidence acquisition path.
+        # Return explicit NO_BET instead of generating false/mismatched evidence.
+        return {
+            "engine": "Elite MatchMaster UMIOS TITAN",
+            "fixture_resolution": {
+                "requested_home": item.home,
+                "requested_away": item.away,
+                "resolved_home": (event.get("homeTeam") or {}).get("name"),
+                "resolved_away": (event.get("awayTeam") or {}).get("name"),
+                "scheduled_date": resolved_date,
+                "source": event.get("source"),
+                "resolution_only": True,
+            },
+            "qualification": {"state": "NOT_QUALIFIED", "blockers": ["ALTERNATE_SOURCE_ID_NOT_SUPPORTED_BY_PRIMARY_EVIDENCE_ACQUISITION"]},
+            "prediction": {"state": "NO_BET", "reason": "Fixture discovered independently, but complete trusted evidence was not acquired through the repository pipeline."},
+            "arbiter": {"state": "NO_BET", "reason": "Fail-closed: fixture discovery alone is not sufficient for analysis."},
+            "prediction_status": "NO_BET",
+            "evidence": {"source": event.get("source"), "fixture_identity_only": True},
+            "date_lookup_errors": date_errors,
+            "generated_at": time.time(),
+        }
+
     if not event:
         # Return actionable diagnostics without fabricating a prediction.
         sample = []
