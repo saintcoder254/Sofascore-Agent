@@ -19,7 +19,8 @@ class UMIOSAdversarialLayer:
         blockers=[]; warnings=[]
         gate = gate if isinstance(gate, dict) else {}
         gate_checks = gate.get("checks") if isinstance(gate.get("checks"), dict) else {}
-        if gate.get("state") != "QUALIFIED" or gate.get("blockers") or not gate_checks or any(v is not True for v in gate_checks.values()):
+        required_gate_checks = {"event", "lineups", "statistics", "incidents", "freshness", "pre_match_state", "fixture_identity", "market_data", "lineup_signal", "statistics_signal", "incidents_schema", "external_verification", "trusted_evidence"}
+        if gate.get("state") != "QUALIFIED" or gate.get("blockers") != [] or not required_gate_checks.issubset(gate_checks) or any(gate_checks.get(k) is not True for k in required_gate_checks):
             blockers.append("QUALIFICATION_BLOCKED")
         if gate.get("freshness_age_seconds") is None or gate.get("freshness_age_seconds",999999)>180: blockers.append("STALE_EVIDENCE")
         if gate.get("checks",{}).get("external_verification") is not True: blockers.append("EXTERNAL_VERIFICATION_MISSING")
@@ -105,7 +106,8 @@ class UMIOSFinalArbiter:
     def decide(self,event,evidence,gate,prediction):
         gate = gate if isinstance(gate, dict) else {}
         gate_checks = gate.get("checks") if isinstance(gate.get("checks"), dict) else {}
-        if gate.get("state") != "QUALIFIED" or gate.get("blockers") or not gate_checks or any(v is not True for v in gate_checks.values()):
+        required_gate_checks = {"event", "lineups", "statistics", "incidents", "freshness", "pre_match_state", "fixture_identity", "market_data", "lineup_signal", "statistics_signal", "incidents_schema", "external_verification", "trusted_evidence"}
+        if gate.get("state") != "QUALIFIED" or gate.get("blockers") != [] or not required_gate_checks.issubset(gate_checks) or any(gate_checks.get(k) is not True for k in required_gate_checks):
             return {"state":"NO_BET","reason":"qualification_gate_blocked",
                     "challenge":{"state":"BLOCK","blockers":["QUALIFICATION_BLOCKED"]},
                     "prediction":prediction}

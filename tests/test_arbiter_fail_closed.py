@@ -25,6 +25,15 @@ class TestArbiterFailClosed(unittest.TestCase):
         self.assertEqual(result["state"], "NO_BET")
         self.assertEqual(result["reason"], "qualification_gate_blocked")
 
+    def test_partial_true_checks_do_not_qualify(self):
+        result = self.arbiter.decide({}, {}, {
+            "state": "QUALIFIED",
+            "checks": {"freshness": True, "external_verification": True},
+            "blockers": [],
+        }, self.prediction)
+        self.assertEqual(result["state"], "NO_BET")
+        self.assertEqual(result["reason"], "qualification_gate_blocked")
+
     def test_missing_qualification_checks_are_rejected(self):
         result = self.arbiter.decide({}, {}, {
             "state": "QUALIFIED", "checks": {}, "blockers": []
