@@ -32,4 +32,4 @@ jobs:
       - name: Run parallel live diagnostics
         env:
           SOFASCORE_SWARM_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds || '12' }}
-        run: python scripts/sofascore_403_swarm.py
+        run: python -m scripts.sofascore_403_swarm
