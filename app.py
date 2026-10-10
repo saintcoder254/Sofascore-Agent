@@ -301,27 +301,80 @@ class MatchGatewayIn(BaseModel):
     event_id: str | None = None
 
 def _normalize_team_name(value: str) -> str:
+    """Normalize team labels while retaining meaningful words for safe matching."""
     import re
-    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+    text = (value or "").lower()
+    # Strip common club prefixes/suffixes and punctuation, but don't fuzzy-match
+    # unrelated short names.
+    text = re.sub(r"\\b(fc|sc|fk|cf|ac|sv|sk|red bull)\\b", lambda m: "red bull" if m.group(1) == "red bull" else " ", text)
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def _team_names(team: dict) -> set[str]:
+    """Return normalized names from the feed's common full/short-name fields."""
+    values = []
+    for key in ("name", "shortName", "slug"):
+        value = team.get(key)
+        if value:
+            values.append(_normalize_team_name(str(value)))
+    return {v for v in values if v}
+
+
+def _name_matches(requested: str, team: dict) -> bool:
+    target = _normalize_team_name(requested)
+    if not target:
+        return False
+    names = _team_names(team)
+    if target in names:
+        return True
+    # Permit a meaningful multi-token name to be contained in a longer official
+    # name, but reject one-token fragments to avoid accidental fixture collisions.
+    target_tokens = target.split()
+    if len(target_tokens) >= 2:
+        return any(target in name or name in target for name in names if len(name.split()) >= 2)
+    return False
+
 
 def _resolve_today_fixture(events, home: str, away: str):
-    target_home=_normalize_team_name(home)
-    target_away=_normalize_team_name(away)
-    exact=[]
-    partial=[]
-    for event in events or []:
-        eh=_normalize_team_name((event.get("homeTeam") or {}).get("name",""))
-        ea=_normalize_team_name((event.get("awayTeam") or {}).get("name",""))
-        if eh==target_home and ea==target_away:
-            exact.append(event)
-        elif ((target_home in eh or eh in target_home) and
-              (target_away in ea or ea in target_away)):
-            partial.append(event)
-    matches=exact or partial
+    """Resolve only the requested home-away orientation; never silently reverse it."""
+    matches = [
+        event for event in (events or [])
+        if _name_matches(home, event.get("homeTeam") or {})
+        and _name_matches(away, event.get("awayTeam") or {})
+    ]
     if not matches:
         return None
-    matches.sort(key=lambda e: float(e.get("startTimestamp") or e.get("timestamp") or 0))
+    # If multiple editions/rematches exist, prefer the nearest upcoming event.
+    now = time.time()
+    def distance(event):
+        raw = event.get("startTimestamp") or event.get("timestamp") or 0
+        try:
+            stamp = float(raw)
+            if stamp > 1e12:
+                stamp /= 1000
+        except (TypeError, ValueError):
+            stamp = now
+        return (0 if stamp >= now else 1, abs(stamp - now))
+    matches.sort(key=distance)
     return matches[0]
+
+
+async def _find_fixture_across_dates(home: str, away: str):
+    """Search nearby SofaScore scheduled-event dates if today's feed misses a match."""
+    import datetime
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    errors = []
+    # Try a small bounded window around UTC today; current-day lookup remains first.
+    for offset in (1, -1, 2, -2, 3, -3):
+        day = (today + datetime.timedelta(days=offset)).isoformat()
+        try:
+            payload = await adapter.primary.get_json(f"/sport/football/scheduled-events/{day}")
+            found = _resolve_today_fixture(payload.get("events", []), home, away)
+            if found:
+                return found, day, errors
+        except Exception as exc:
+            errors.append({"date": day, "error": repr(exc)})
+    return None, None, errors
 
 async def _run_fixture_analysis(event_id: str):
     bundle=await acquisition.acquire(event_id)
@@ -345,18 +398,49 @@ async def _run_fixture_analysis(event_id: str):
 @app.post("/analyze/match")
 async def analyze_match_gateway(item: MatchGatewayIn):
     if not item.home.strip() or not item.away.strip():
-        raise HTTPException(400,"home and away are required")
+        raise HTTPException(400, "home and away are required")
     if item.event_id:
         return await _run_fixture_analysis(item.event_id)
-    data=await adapter.today_events()
-    event=_resolve_today_fixture(data.get("events",[]),item.home,item.away)
+
+    data = await adapter.today_events()
+    event = _resolve_today_fixture(data.get("events", []), item.home, item.away)
+    resolved_date = data.get("date")
+    date_errors = []
     if not event:
-        raise HTTPException(404,f"Today's fixture not found: {item.home} vs {item.away}")
-    return await _run_fixture_analysis(str(event.get("id")))
+        event, resolved_date, date_errors = await _find_fixture_across_dates(item.home, item.away)
+    if not event:
+        # Return actionable diagnostics without fabricating a prediction.
+        sample = []
+        for candidate in (data.get("events") or [])[:12]:
+            sample.append({
+                "home": (candidate.get("homeTeam") or {}).get("name"),
+                "away": (candidate.get("awayTeam") or {}).get("name"),
+                "id": candidate.get("id"),
+            })
+        raise HTTPException(status_code=404, detail={
+            "error": "fixture_not_found",
+            "requested": {"home": item.home, "away": item.away},
+            "searched_dates": [data.get("date")] + [(x.get("date")) for x in date_errors],
+            "source": data.get("source") or adapter.active_source,
+            "today_event_samples": sample,
+            "date_lookup_errors": date_errors,
+            "hint": "Use /events/today or a known SofaScore event ID with /analyze/fixture/{event_id}.",
+        })
+    result = await _run_fixture_analysis(str(event.get("id")))
+    result["fixture_resolution"] = {
+        "requested_home": item.home,
+        "requested_away": item.away,
+        "resolved_home": (event.get("homeTeam") or {}).get("name"),
+        "resolved_away": (event.get("awayTeam") or {}).get("name"),
+        "scheduled_date": resolved_date,
+        "source": event.get("source") or data.get("source") or adapter.active_source,
+    }
+    return result
+
 
 @app.get("/analyze/match")
 async def analyze_match_gateway_get(home: str, away: str, event_id: str | None = None):
-    return await analyze_match_gateway(MatchGatewayIn(home=home,away=away,event_id=event_id))
+    return await analyze_match_gateway(MatchGatewayIn(home=home, away=away, event_id=event_id))
 
 @app.get("/live")
 async def live():return {"count":len(store.current()),"items":store.current(),"source":state["active_source"] or adapter.active_source}
