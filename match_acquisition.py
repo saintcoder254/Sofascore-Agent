@@ -1,8 +1,25 @@
-import asyncio, time
+import asyncio, time, re, unicodedata
 
 class MatchAcquisitionEngine:
     """Build the complete evidence bundle used by the UMIOS probability engine."""
     def __init__(self,fusion): self.fusion=fusion
+
+    @staticmethod
+    def _team_key(value):
+        value = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode().lower()
+        value = re.sub(r"\b(fc|sc|cf|afc|club|football|soccer)\b", " ", value)
+        return re.sub(r"[^a-z0-9]", "", value)
+
+    @classmethod
+    def _same_team(cls, left, right):
+        a, b = cls._team_key(left), cls._team_key(right)
+        return bool(a and b and (a == b or (min(len(a), len(b)) >= 5 and (a in b or b in a))))
+
+    @classmethod
+    def _same_fixture(cls, target, candidate):
+        th, ta = (target.get("homeTeam") or {}).get("name"), (target.get("awayTeam") or {}).get("name")
+        ch, ca = (candidate.get("homeTeam") or {}).get("name"), (candidate.get("awayTeam") or {}).get("name")
+        return cls._same_team(th, ch) and cls._same_team(ta, ca)
 
     async def enrich_event(self,event_id):
         # Alternate-source IDs must never be passed to SofaScore endpoints.
@@ -13,6 +30,33 @@ class MatchAcquisitionEngine:
             try:
                 raw = await self.fusion.fotmob.match_details(source_id)
                 bundle = self.fusion.fotmob.normalize_match_details(raw)
+                # Team histories are fetched from the same provider using IDs
+                # in the match-details response; no empty placeholder is treated as data.
+                history = {}
+                target_event = bundle.get("event") or {}
+                for side in ("home", "away"):
+                    team = target_event.get(side + "Team") or {}
+                    team_id = team.get("id")
+                    if not team_id:
+                        history[side] = {"source": "fotmob", "events": [], "error": "FOTMOB_TEAM_ID_MISSING"}
+                        continue
+                    try:
+                        team_payload = await self.fusion.fotmob.team_details(team_id)
+                        history[side] = self.fusion.fotmob.normalize_team_history(team_payload, team_id)
+                    except Exception as history_exc:
+                        history[side] = {"source": "fotmob", "events": [], "error": "FOTMOB_TEAM_HISTORY_UNAVAILABLE",
+                                         "detail": repr(history_exc)}
+                bundle["history"] = history
+                home_name = (target_event.get("homeTeam") or {}).get("name")
+                away_name = (target_event.get("awayTeam") or {}).get("name")
+                try:
+                    odds = await self.fusion.fotmob.external_odds(home_name, away_name, target_event.get("date"))
+                    bundle["odds"] = {"h2h": odds}
+                except Exception as odds_exc:
+                    bundle["odds"] = {"h2h": {"source": "the_odds_api", "markets": [],
+                                                "error": "EXTERNAL_ODDS_UNAVAILABLE", "detail": repr(odds_exc),
+                                                "retrieved_at": time.time()}}
+                # The bundle remains blocked unless all hard requirements are met.
             except Exception as exc:
                 now = time.time()
                 return {
@@ -44,18 +88,36 @@ class MatchAcquisitionEngine:
                 observations = [{"source": "fotmob",
                                  "retrieved_at": bundle.get("retrieved_at", time.time()),
                                  "payload": event}]
+                verified_matches = []
                 for source_payload in final_results.get("sources", []) or []:
                     source = str(source_payload.get("source") or "")
+                    if source == "fotmob":
+                        continue  # never count the same provider as independent verification
                     for candidate in source_payload.get("events", []) or []:
-                        ch = str((candidate.get("homeTeam") or {}).get("name") or "").strip().lower()
-                        ca = str((candidate.get("awayTeam") or {}).get("name") or "").strip().lower()
-                        if eh and ea and eh == ch and ea == ca:
+                        if self._same_fixture(event, candidate):
+                            verified_matches.append((source, source_payload, candidate))
                             observations.append({"source": source,
                                                  "retrieved_at": source_payload.get("retrieved_at", time.time()),
                                                  "payload": candidate})
+                bundle["verification"] = {
+                    "events": [candidate for _, _, candidate in verified_matches],
+                    "sources": sorted({source for source, _, _ in verified_matches}),
+                    "retrieved_at": time.time(),
+                    **({"error": "INDEPENDENT_FIXTURE_MATCH_NOT_FOUND"} if not verified_matches else {}),
+                }
+                # Remove only blockers whose required evidence is now actually present.
+                blocks = list((bundle.get("data_trust") or {}).get("hard_blocks", []))
+                if verified_matches:
+                    blocks = [b for b in blocks if b != "ALTERNATE_SOURCE_EVIDENCE_REQUIRES_INDEPENDENT_VERIFICATION"]
+                histories = bundle.get("history") or {}
+                if all((histories.get(side) or {}).get("events") for side in ("home", "away")):
+                    blocks = [b for b in blocks if b != "FOTMOB_TEAM_HISTORY_UNAVAILABLE"]
+                odds_bundle = bundle.get("odds") or {}
+                if any(m.get("markets") for m in odds_bundle.values() if isinstance(m, dict)):
+                    blocks = [b for b in blocks if b != "FOTMOB_MARKET_ODDS_UNAVAILABLE"]
                 trust = self.fusion.trust_mesh.evaluate(observations, {"now": time.time()})
                 trust.setdefault("hard_blocks", [])
-                for block in (bundle.get("data_trust") or {}).get("hard_blocks", []):
+                for block in blocks:
                     if block not in trust["hard_blocks"]:
                         trust["hard_blocks"].append(block)
                 trust["state"] = "QUARANTINED" if trust["hard_blocks"] else trust.get("state", "QUARANTINED")
