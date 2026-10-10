@@ -60,7 +60,16 @@ async def main():
         )
         if identifiable == 0:
             raise RuntimeError("LIVE_SMOKE_FAILED: no fixtures have both team names")
-        print(f"LIVE_SMOKE_PASS acquisition_only identifiable_fixtures={identifiable}")
+        trusted = source_summary["trusted_events"]
+        if trusted == 0:
+            raise RuntimeError(
+                "LIVE_SMOKE_FAILED: fixtures were acquired but none passed the "
+                "independent-source trust mesh; acquisition success is not a trust pass"
+            )
+        print(
+            "LIVE_SMOKE_PASS acquisition_and_trust "
+            f"identifiable_fixtures={identifiable} trusted_fixtures={trusted}"
+        )
     finally:
         await adapter.close()
 
