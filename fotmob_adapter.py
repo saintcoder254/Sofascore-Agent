@@ -111,9 +111,9 @@ class FotMobAdapter:
             result.append(normalized)
         return result
 
-    async def today_events(self):
+    async def events_for_date(self, day):
+        """Fetch and normalize FotMob fixtures for an explicit UTC calendar date."""
         self.metrics["attempts"] += 1
-        day = self._date()
         try:
             response = await self.client.get(
                 self.BASE,
@@ -139,8 +139,11 @@ class FotMobAdapter:
         except Exception as exc:
             self.metrics["failures"] += 1
             self.metrics["last_error"] = repr(exc)
-            logger.error("FOTMOB_ERROR error=%r", exc)
+            logger.error("FOTMOB_ERROR date=%s error=%r", day, exc)
             raise
+
+    async def today_events(self):
+        return await self.events_for_date(self._date())
 
     async def close(self):
         await self.client.aclose()
