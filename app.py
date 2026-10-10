@@ -306,7 +306,7 @@ def _normalize_team_name(value: str) -> str:
     text = (value or "").lower()
     # Strip common club prefixes/suffixes and punctuation, but don't fuzzy-match
     # unrelated short names.
-    text = re.sub(r"\\b(fc|sc|fk|cf|ac|sv|sk|red bull)\\b", lambda m: "red bull" if m.group(1) == "red bull" else " ", text)
+    text = re.sub(r"\b(fc|sc|fk|cf|ac|sv|sk)\b", " ", text)
     return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
