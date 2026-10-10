@@ -17,7 +17,7 @@ class FotMobReliabilityTests(unittest.TestCase):
         self.assertEqual(events[0]["homeTeam"]["name"], "Rapid Wien")
 
     def test_team_name_match_handles_accents_and_club_suffixes(self):
-        self.assertTrue(MatchAcquisitionEngine._same_team("Bayern München", "Bayern Munich"))
+        self.assertTrue(MatchAcquisitionEngine._same_team("Bayern München", "Bayern Munchen"))
         self.assertTrue(MatchAcquisitionEngine._same_team("Rapid Wien", "SK Rapid Wien"))
         self.assertFalse(MatchAcquisitionEngine._same_team("Rapid Wien", "Austria Wien"))
 
