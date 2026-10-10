@@ -1,4 +1,4 @@
-import time, unittest
+import json, time, unittest
 from data_trust_mesh import DataTrustMesh
 
 def obs(source, home="A", away="B", hs=1, a=0, age=5):
@@ -7,6 +7,22 @@ def obs(source, home="A", away="B", hs=1, a=0, age=5):
                        "status":{"type":{"state":"finished"}}}}
 
 class TestDataTrustMesh(unittest.TestCase):
+    def test_trust_envelope_can_be_attached_to_observed_event_without_cycle(self):
+        event = {"homeTeam": {"name": "A", "score": 1},
+                 "awayTeam": {"name": "B", "score": 0},
+                 "status": {"type": {"state": "finished"}}}
+        other = {"homeTeam": {"name": "A", "score": 1},
+                 "awayTeam": {"name": "B", "score": 0},
+                 "status": {"type": {"state": "finished"}}}
+        envelope = DataTrustMesh().evaluate([
+            {"source": "sofascore", "retrieved_at": time.time(), "payload": event},
+            {"source": "fotmob", "retrieved_at": time.time(), "payload": other},
+        ])
+        event["data_trust"] = envelope
+        encoded = json.dumps(event, sort_keys=True, separators=(",", ":"))
+        self.assertIn('"data_trust"', encoded)
+        self.assertNotIn('"payload": {"homeTeam"', encoded)
+
     def test_two_independent_agreeing_sources_are_trusted(self):
         out=DataTrustMesh().evaluate([obs("sofascore"),obs("fotmob")])
         self.assertEqual(out["state"],"TRUSTED")
