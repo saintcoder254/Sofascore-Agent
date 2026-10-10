@@ -55,7 +55,7 @@ class TestFotMobMatchDetails(unittest.IsolatedAsyncioTestCase):
         })
         self.assertEqual(normalized["event"]["id"], "fotmob:12345")
         self.assertEqual(normalized["event"]["homeTeam"]["name"], "Home")
-        self.assertEqual(normalized["statistics"]["groups"][0]["stats"][0]["title"], "Possession")
+        self.assertEqual(normalized["statistics"]["groups"][0]["title"], "Possession")
         self.assertEqual(normalized["lineups"]["home"]["name"], "Home")
         self.assertEqual(normalized["incidents"]["events"][0]["type"], "Goal")
         self.assertEqual(normalized["shotmap"]["shots"][0]["teamId"], 1)
