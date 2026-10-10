@@ -149,6 +149,111 @@ class FotMobAdapter:
         await self.client.aclose()
 
 
+    @staticmethod
+    def normalize_match_details(result):
+        """Normalize documented FotMob matchDetails sections into the acquisition schema.
+
+        Missing sections remain explicit errors; they are never filled with
+        fabricated values or interpreted as SofaScore payloads.
+        """
+        import datetime
+        import time
+
+        if not isinstance(result, dict) or result.get("source") != "fotmob":
+            raise ValueError("FotMob source-tagged match details are required")
+        raw = result.get("raw_payload")
+        if not isinstance(raw, dict) or not raw:
+            raise ValueError("FotMob raw payload is missing")
+        general = raw.get("general") or {}
+        header = raw.get("header") or {}
+        content = raw.get("content") or {}
+        teams = header.get("teams") or []
+        home = general.get("homeTeam") or (teams[0] if len(teams) > 0 else {})
+        away = general.get("awayTeam") or (teams[1] if len(teams) > 1 else {})
+        status = header.get("status") or {}
+        reason = status.get("reason") or {}
+        state = ("finished" if status.get("finished") or general.get("finished") else
+                 "inprogress" if status.get("started") or general.get("started") else
+                 "notstarted")
+        if status.get("cancelled"):
+            state = "cancelled"
+        event = {
+            "id": "fotmob:" + str(general.get("matchId") or result.get("source_event_id")),
+            "source": "fotmob",
+            "source_event_id": str(general.get("matchId") or result.get("source_event_id") or ""),
+            "date": general.get("matchTimeUTCDate") or status.get("utcTime"),
+            "name": general.get("matchName"),
+            "status": {"type": {"state": state, "description": reason.get("long") or reason.get("short")}},
+            "homeTeam": {"id": str(home.get("id") or ""), "name": home.get("name"), "score": home.get("score")},
+            "awayTeam": {"id": str(away.get("id") or ""), "name": away.get("name"), "score": away.get("score")},
+            "competition": {"name": general.get("leagueName"), "id": general.get("leagueId")},
+            "normalization_state": "NORMALIZED",
+            "raw_source_payload": {"general": general, "header": header},
+        }
+
+        stats_root = ((content.get("stats") or {}).get("Periods") or {}).get("All") or {}
+        stat_groups = stats_root.get("stats") or []
+        statistics = {"source": "fotmob", "period": "All", "groups": stat_groups}
+        if not stat_groups:
+            statistics["error"] = "FOTMOB_STATS_UNAVAILABLE"
+
+        lineup = content.get("lineup") or {}
+        lineup_home = lineup.get("homeTeam")
+        lineup_away = lineup.get("awayTeam")
+        if not lineup_home or not lineup_away:
+            lineups = lineup.get("lineups") or []
+            for item in lineups:
+                tid = str(item.get("teamId") or item.get("id") or "")
+                if tid and tid == str(home.get("id") or ""):
+                    lineup_home = item
+                elif tid and tid == str(away.get("id") or ""):
+                    lineup_away = item
+        normalized_lineups = {"source": "fotmob", "home": lineup_home, "away": lineup_away}
+        if not lineup_home and not lineup_away:
+            normalized_lineups["error"] = "FOTMOB_LINEUPS_UNAVAILABLE"
+
+        facts = content.get("matchFacts") or {}
+        event_root = facts.get("events") or {}
+        incidents = event_root.get("events") if isinstance(event_root, dict) else None
+        if incidents is None:
+            incidents = header.get("events")
+        normalized_incidents = {"source": "fotmob", "events": incidents or []}
+        if incidents is None:
+            normalized_incidents["error"] = "FOTMOB_INCIDENTS_UNAVAILABLE"
+
+        shotmap = content.get("shotmap") or {}
+        normalized_shotmap = {"source": "fotmob", "shots": shotmap.get("shots") or []}
+        if not shotmap.get("shots"):
+            normalized_shotmap["error"] = "FOTMOB_SHOTMAP_UNAVAILABLE"
+
+        h2h = content.get("h2h") or {}
+        if not h2h:
+            h2h = {"error": "FOTMOB_H2H_UNAVAILABLE", "source": "fotmob"}
+        else:
+            h2h = {"source": "fotmob", **h2h}
+
+        retrieved_at = result.get("retrieved_at") or time.time()
+        return {
+            "event": event,
+            "statistics": statistics,
+            "shotmap": normalized_shotmap,
+            "incidents": normalized_incidents,
+            "lineups": normalized_lineups,
+            "h2h": h2h,
+            "history": {"home": {"events": [], "error": "FOTMOB_TEAM_HISTORY_UNAVAILABLE"},
+                        "away": {"events": [], "error": "FOTMOB_TEAM_HISTORY_UNAVAILABLE"}},
+            "odds": {"1": {"error": "FOTMOB_MARKET_ODDS_UNAVAILABLE"},
+                     "2": {"error": "FOTMOB_MARKET_ODDS_UNAVAILABLE"}},
+            "verification": {"events": [], "error": "INDEPENDENT_VERIFICATION_REQUIRED"},
+            "final_results": {"sources": []},
+            "fotmob_raw": result,
+            "data_trust": {"state": "QUARANTINED",
+                           "hard_blocks": ["ALTERNATE_SOURCE_EVIDENCE_REQUIRES_INDEPENDENT_VERIFICATION",
+                                           "FOTMOB_MARKET_ODDS_UNAVAILABLE",
+                                           "FOTMOB_TEAM_HISTORY_UNAVAILABLE"]},
+            "retrieved_at": retrieved_at,
+        }
+
     async def match_details(self, match_id):
         """Fetch raw FotMob match details without pretending they are SofaScore data.
 
