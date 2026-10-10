@@ -17,6 +17,7 @@ from umios_qualifier import UMIOSQualifier
 from umios_core import UMIOSCoreEngine
 from umios_probability import UMIOSProbabilityEngine
 from umios_arbiter import UMIOSFinalArbiter
+from fixture_audit import build_fixture_audit
 from titan_incident_audit import TitanIncidentAudit
 from omega_weight_engine import OmegaWeightEngine
 from calibration_pipeline import CalibrationPipeline
@@ -260,15 +261,16 @@ async def analyze_fixture(event_id:str):
     analysis=core.analyze(event_id,bundle,gate)
     prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
     arbiter_decision=arbiter.decide(event,bundle,gate,prediction)
-    case_summary=_persist_case_analysis(event_id,bundle,prediction,arbiter_decision)
+    fixture_audit=build_fixture_audit(event_id,bundle,gate,analysis,prediction,arbiter_decision)
+    case_summary=_persist_case_analysis(event_id,bundle,prediction,arbiter_decision,fixture_audit=fixture_audit)
     if arbiter_decision.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
         sel=prediction["selection"]
         stable=hashlib.sha256((str(event_id)+"|"+str(sel["market"])+"|"+str(sel["selection"])+"|UMIOS-TITAN-MarketSpecific-v3").encode()).hexdigest()
         store.add_prediction(prediction_id=stable,fixture_id=event_id,market=sel["market"],predicted_probability=sel["model_probability"],selection=sel["selection"],odds=sel["odds"],model_version="UMIOS-TITAN-MarketSpecific-v3",features={"expected_goals":prediction["expected_goals"],"history":prediction["history"],"edge":sel["edge"],"expected_value":sel["expected_value"],"simulations":prediction["simulations"],"form_trend":prediction.get("form_trend")})
-    return {"engine":"Elite MatchMaster UMIOS TITAN","fixture_id":event_id,"qualification":gate,"analysis":analysis,"prediction":prediction,"arbiter":arbiter_decision,"case_database":case_summary,"evidence":bundle if gate["state"]=="QUALIFIED" else {"event":bundle.get("event"),"odds":bundle.get("odds"),"verification":bundle.get("verification"),"retrieved_at":bundle.get("retrieved_at")},"prediction_status":arbiter_decision.get("state","NO_BET"),"generated_at":time.time()}
+    return {"engine":"Elite MatchMaster UMIOS TITAN","fixture_id":event_id,"qualification":gate,"analysis":analysis,"prediction":prediction,"arbiter":arbiter_decision,"case_database":case_summary,"fixture_audit":fixture_audit,"evidence":bundle if gate["state"]=="QUALIFIED" else {"event":bundle.get("event"),"odds":bundle.get("odds"),"verification":bundle.get("verification"),"retrieved_at":bundle.get("retrieved_at")},"prediction_status":arbiter_decision.get("state","NO_BET"),"generated_at":time.time()}
 
 
-def _persist_case_analysis(event_id, bundle, prediction, arbiter_decision):
+def _persist_case_analysis(event_id, bundle, prediction, arbiter_decision, fixture_audit=None):
     case=case_databases.open(event_id)
     event=bundle.get("event") or {}
     case.record_observation("ACQUISITION","match_acquisition","sofascore",event,status="RECEIVED")
@@ -285,6 +287,9 @@ def _persist_case_analysis(event_id, bundle, prediction, arbiter_decision):
         case.record_market(selection["market"],selection.get("selection"),odds_value,1.0/odds_value,"decision",selection)
         case.record_prediction(selection)
     case.record_arbiter(arbiter_decision)
+    if fixture_audit:
+        case.record_observation("FIXTURE_AUDIT","fixture_audit","umios",fixture_audit,
+                                status=fixture_audit.get("analysis",{}).get("final_verdict","NO_BET"))
     if arbiter_decision.get("state")=="NO_BET":
         for blocker in ((arbiter_decision.get("challenge") or {}).get("blockers") or []):
             case.record_failure(blocker,"BLOCK",{"reason":arbiter_decision.get("reason")})

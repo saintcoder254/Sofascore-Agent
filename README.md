@@ -85,3 +85,17 @@ The hardening layer also includes:
 - `docs/UMIOS_TITAN_10_POINT_HARDENING.md` documenting the ten corrective controls.
 
 The model deliberately prefers NO_BET when the probability model, evidence regime or sample depth is inadequate. Monte Carlo sample count is a simulation parameter, not a substitute for correct model specification.
+
+
+## Fixture-level audit artifact
+
+Every request to `GET /analyze/fixture/{event_id}` now returns a `fixture_audit` object and records that object in the fixture case audit chain as a `FIXTURE_AUDIT` observation. The artifact includes the runtime revision when injected, canonical fixture identity, trust-envelope state and hash, source provenance and age, qualification checks and blockers, timestamped odds observations, probability-model status, expected value when emitted by the model, arbiter state, final verdict, and a SHA-256 digest of the artifact contents.
+
+The audit is deliberately fail-closed:
+- Aggregate live-source counts never qualify an individual fixture.
+- A trust state is verified only when that fixture's trust envelope is explicitly `TRUSTED` and has no hard blocks.
+- Odds are marked fresh only when market observations include a source and retrieval timestamps within the configured 180-second audit window.
+- A numeric model probability is not called validated unless the prediction payload explicitly reports `calibration_status=VALIDATED`.
+- Missing provenance, odds timestamps, calibration evidence, or positive expected value cannot be upgraded to a pass. The artifact's final verdict remains `NO_BET` unless the required evidence is present; even a candidate state requires external review.
+
+The artifact is an auditable report of the runtime's actual outputs, not a replacement for live deployment checks, independent model calibration, or human review. The runtime revision is reported as `RUNTIME_REVISION_NOT_INJECTED` when deployment does not expose `GITHUB_SHA` or `MATCHMASTER_REVISION`.
