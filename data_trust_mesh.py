@@ -9,7 +9,16 @@ import hashlib
 import json
 import math
 import time
+import re
+import unicodedata
 from collections import defaultdict
+
+def _canonical_team_name(value):
+    """Normalize harmless provider naming variants without fuzzy substring matching."""
+    value = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode().lower()
+    value = re.sub(r"\b(fc|sc|cf|afc|sk|fk|club|football|soccer)\b", " ", value)
+    return re.sub(r"[^a-z0-9]", "", value)
+
 
 class TrustAgent:
     name = "base"
@@ -89,15 +98,19 @@ class ConflictAgent(TrustAgent):
         if field == "kickoff": return event.get("startTimestamp") or event.get("timestamp") or event.get("date")
         return None
     @staticmethod
-    def _norm(v):
-        return None if v is None else str(v).strip().lower()
+    def _norm(v, field=None):
+        if v is None:
+            return None
+        if field in {"home", "away"}:
+            return _canonical_team_name(v)
+        return str(v).strip().lower()
     def run(self, bundle, context):
         conflicts = []
         for field in self.CRITICAL:
             values = defaultdict(list)
             for o in bundle.get("observations") or []:
                 v = self._value(o.get("payload"), field)
-                if v is not None: values[self._norm(v)].append(o.get("source"))
+                if v is not None: values[self._norm(v, field)].append(o.get("source"))
             if len(values) > 1:
                 conflicts.append({"field": field, "values": dict(values)})
         return {"state": "BLOCK" if conflicts else "PASS", "conflicts": conflicts}
@@ -136,7 +149,7 @@ class ConsensusAgent(TrustAgent):
                 h=(p.get("homeTeam") or {}).get("name")
                 a=(p.get("awayTeam") or {}).get("name")
                 if h and a:
-                    identities.add((str(h).strip().lower(),str(a).strip().lower()))
+                    identities.add((_canonical_team_name(h), _canonical_team_name(a)))
             state = "PASS" if len(identities)==1 and len(sources) >= self.minimum else "BLOCK"
             mode = "IDENTITY_CONSENSUS"
         return {"state":state,"mode":mode,"required_sources":self.minimum,"available_sources":sorted(sources),
@@ -176,7 +189,9 @@ class SynthesisAgent(TrustAgent):
             vals=[x for x in vals if x[1] is not None]
             if not vals: continue
             groups=defaultdict(list)
-            for src,v in vals: groups[str(v).strip().lower()].append((src,v))
+            for src,v in vals:
+                normalized = _canonical_team_name(v) if field in {"home", "away"} else str(v).strip().lower()
+                groups[normalized].append((src,v))
             if len(groups)==1: fields[field]=vals[0][1]
             else: conflicts.append({"field":field,"values":{k:[x[0] for x in v] for k,v in groups.items()}})
         hard_conflicts=[x for x in conflicts if x.get("field")!="kickoff"]

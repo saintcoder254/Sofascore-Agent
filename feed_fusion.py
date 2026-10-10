@@ -77,12 +77,10 @@ class FeedFusionAdapter:
             p=await self._fallback_fotmob(); witnesses.append(p)
         except Exception: pass
         if futbol24_payload is None: futbol24_payload=await self.verify_futbol24()
-        if futbol24_payload and futbol24_payload.get("events"):
-            # Futbol24 parser returns explicit scores but not a typed completion state.
-            fp=dict(futbol24_payload); fp["events"]=[]
-            for e in futbol24_payload.get("events",[]):
-                e=dict(e); e["status"]={"type":{"state":"finished","completed":True}}; fp["events"].append(e)
-            witnesses.append(fp)
+        # Futbol24's current public-page parser extracts score-like text but
+        # cannot establish fixture identity or a typed match-completion state.
+        # Keep it as a diagnostic/conflict signal only; never promote it to an
+        # independent trusted witness by fabricating status="finished".
         self.metrics["final_verification_sources"]=len(witnesses)
         self.metrics["final_verification_events"]=sum(len(x.get("events",[])) for x in witnesses)
         self.metrics["last_final_verification_at"]=time.time()

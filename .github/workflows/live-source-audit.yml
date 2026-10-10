@@ -1,0 +1,63 @@
+name: Manual live source audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      timeout_seconds:
+        description: "HTTP timeout per provider request"
+        required: false
+        default: "15"
+        type: string
+  push:
+    branches:
+      - "feat/manual-live-source-audit"
+    paths:
+      - ".github/workflows/live-source-audit.yml"
+      - "scripts/live_source_smoke.py"
+      - "feed_fusion.py"
+      - "data_trust_mesh.py"
+      - "match_acquisition.py"
+      - "*_adapter.py"
+      - "tests/**"
+      - "requirements.txt"
+  pull_request:
+    paths:
+      - ".github/workflows/live-source-audit.yml"
+      - "scripts/live_source_smoke.py"
+      - "feed_fusion.py"
+      - "data_trust_mesh.py"
+      - "match_acquisition.py"
+      - "*_adapter.py"
+      - "tests/**"
+      - "requirements.txt"
+
+permissions:
+  contents: read
+
+jobs:
+  offline-guard:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt pytest
+      - run: python -m compileall -q .
+      - run: pytest -q
+
+  live-source-audit:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Run public-source acquisition smoke test
+        env:
+          LIVE_HTTP_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds || '15' }}
+        run: python scripts/live_source_smoke.py
