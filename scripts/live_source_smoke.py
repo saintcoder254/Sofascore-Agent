@@ -6,7 +6,15 @@ It never places bets and never upgrades an event to qualified.
 import asyncio
 import json
 import os
+import sys
 import time
+from pathlib import Path
+
+# Executing a script by path puts scripts/ rather than the repository root on
+# sys.path. Add the root explicitly so root-level adapters import reliably.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from feed_fusion import FeedFusionAdapter
 
