@@ -1,7 +1,8 @@
-"""OMEGA evidence promotion gate."""
+"""OMEGA evidence promotion gate; insufficient validation evidence stays in SHADOW."""
+
 
 class OmegaPromotionGate:
-    VERSION = "OMEGA-PROMOTION-GATE-v1"
+    VERSION = "OMEGA-PROMOTION-GATE-v2"
 
     def __init__(self, min_samples=100, min_clv_samples=20):
         self.min_samples = max(50, int(min_samples))
@@ -9,18 +10,24 @@ class OmegaPromotionGate:
 
     def evaluate(self, ledger, integrity, calibration, weights, market_benchmark):
         reasons = []
-        n = len(ledger)
+        n = len(ledger or [])
         if n < self.min_samples:
             reasons.append("INSUFFICIENT_LEDGER_SAMPLES")
         if not integrity or not all(bool(x.get("valid")) for x in integrity):
             reasons.append("LEDGER_INTEGRITY_FAILURE")
         if calibration.get("state") != "EVALUATED" or not calibration.get("candidate_pass"):
             reasons.append("CALIBRATION_GATE_NOT_PASSED")
-        if not any(x.get("status") == "EARNED" for x in weights.get("models", [])):
+        if not any(x.get("status") == "EARNED" for x in (weights or {}).get("models", [])):
             reasons.append("NO_EARNED_MODEL")
+
+        market_benchmark = market_benchmark or {}
         clv_n = int(market_benchmark.get("clv_available") or 0)
-        if clv_n >= self.min_clv_samples and float(market_benchmark.get("avg_clv") or 0) <= 0:
+        avg_clv = market_benchmark.get("avg_clv")
+        if clv_n < self.min_clv_samples:
+            reasons.append("INSUFFICIENT_CLV_SAMPLES")
+        elif avg_clv is None or float(avg_clv) <= 0:
             reasons.append("MARKET_BENCHMARK_CLV_NOT_POSITIVE")
+
         return {
             "version": self.VERSION,
             "state": "PROMOTE" if not reasons else "SHADOW",
