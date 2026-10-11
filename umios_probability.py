@@ -9,6 +9,17 @@ from competition_regime_engine import CompetitionRegimeEngine
 
 class UMIOSProbabilityEngine:
     """Conservative probability engine with market-specific models, Monte Carlo, form, and value gates."""
+    MIN_MONTE_CARLO_SAMPLES = 1_000_000
+
+    @classmethod
+    def effective_simulation_count(cls, requested):
+        """Enforce the OMEGA production floor; never silently run a smaller sample."""
+        try:
+            requested = int(requested)
+        except (TypeError, ValueError):
+            requested = cls.MIN_MONTE_CARLO_SAMPLES
+        return max(cls.MIN_MONTE_CARLO_SAMPLES, requested)
+
     def __init__(self):
         self.market_models=UMIOSMarketModels()
         self.basketball=BasketballProbabilityEngine()
@@ -169,18 +180,23 @@ class UMIOSProbabilityEngine:
         if rate["gf_last5"] is None or rate["gf_prev"] is None:return 0.0
         return max(-0.35,min(0.35,(rate["gf_last5"]-rate["gf_prev"])*0.12))
 
-    def run(self,event,evidence,gate,simulations=10000):
+    def run(self,event,evidence,gate,simulations=1_000_000):
+        simulations=self.effective_simulation_count(simulations)
         sport=self.basketball._sport(event,evidence)
         if sport=="basketball":
             regime=self.regime.classify(event,evidence)
             result=self.basketball.run(event,evidence,gate,simulations=simulations)
             result["competition_regime"]=regime
+            actual_trials=int(result.get("simulations") or 0)
+            result["monte_carlo_audit"]={"state":"EXECUTED" if actual_trials>=self.MIN_MONTE_CARLO_SAMPLES else "FAILED","trials":actual_trials,"minimum_required":self.MIN_MONTE_CARLO_SAMPLES,"method":"basketball score/total Monte Carlo","gate":"PASS" if actual_trials>=self.MIN_MONTE_CARLO_SAMPLES else "MONTE_CARLO_GATE_FAILED"}
+            if actual_trials < self.MIN_MONTE_CARLO_SAMPLES:
+                result["state"]="NO_BET"; result["reason"]="MONTE_CARLO_GATE_FAILED"; result["selection"]=None
             if result.get("state")=="QUALIFIED_PREDICTION" and result.get("selection"):
                 sample=int((result.get("history") or {}).get("minimum_games") or 0)
                 if sample < int(regime.get("min_history",5)):
                     result["state"]="NO_BET"; result["reason"]="competition_regime_history_gate"; result["selection"]=None
             return result
-        if gate.get("state")!="QUALIFIED":return {"state":"NO_BET","reason":"qualification_gate_blocked","candidates":[]}
+        if gate.get("state")!="QUALIFIED":return {"state":"NO_BET","reason":"qualification_gate_blocked","candidates":[],"simulations":0,"monte_carlo_audit":{"state":"BLOCKED","trials":0,"minimum_required":self.MIN_MONTE_CARLO_SAMPLES,"gate":"MONTE_CARLO_GATE_FAILED","reason":"fixture qualification gate did not pass; simulation was not executed"}}
         home=event.get("homeTeam") or {}; away=event.get("awayTeam") or {}
         hh=self._team_rates(home.get("id"),(evidence.get("history",{}).get("home") or {}).get("events",[]))
         aa=self._team_rates(away.get("id"),(evidence.get("history",{}).get("away") or {}).get("events",[]))
@@ -218,7 +234,7 @@ class UMIOSProbabilityEngine:
             status="QUALIFIED" if history_gate and not suspicious and edge>=0.04 and ev>=0.05 and p>=0.55 else "REJECTED"
             candidates.append({"market":market,"selection":sel,"odds":row["odds"],"model_probability":round(p,4),"market_probability":round(row["market_probability"],4),"edge":round(edge,4),"expected_value":round(ev,4),"status":status,"suspicious_edge":suspicious})
         qualified=sorted((x for x in candidates if x["status"]=="QUALIFIED"),key=lambda x:(x["edge"],x["expected_value"]),reverse=True)
-        return {"state":"QUALIFIED_PREDICTION" if qualified else "NO_BET","model":"UMIOS-MarketSpecific+Poisson+MonteCarlo+FormTrend","model_independence":"MC_IS_NOT_AN_INDEPENDENT_SOURCE","simulations":max(1000,int(simulations)),
+        return {"state":"QUALIFIED_PREDICTION" if qualified else "NO_BET","model":"UMIOS-MarketSpecific+Poisson+MonteCarlo+FormTrend","model_independence":"MC_IS_NOT_AN_INDEPENDENT_SOURCE","simulations":simulations,"monte_carlo_audit":{"state":"EXECUTED","trials":simulations,"seed":str(event.get('id',''))+':'+str(round(lh,4))+':'+str(round(la,4)),"method":"independent Poisson score sampling","minimum_required":self.MIN_MONTE_CARLO_SAMPLES,"gate":"PASS"},
                 "expected_goals":{"home":round(lh,3),"away":round(la,3)},"history":{"home_games":hh["games"],"away_games":aa["games"],"minimum_games":sample},"omega_empirical":empirical,"omega_model_stability":{"theoretical_vs_empirical_available":bool(empirical.get("available")),"empirical_weight":empirical.get("empirical_weight") if empirical.get("available") else None,"empirical_influences_live_ensemble":False,"empirical_quarantine_weight":empirical_live_weight},
                 "dynamic_strength":dynamic_strength,"competition_regime":competition_regime,
                 "form_trend":{"home":round(self._trend(hh),4),"away":round(self._trend(aa),4)},"probabilities":ensemble,"market_models":market_specific,
