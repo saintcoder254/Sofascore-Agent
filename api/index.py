@@ -15,6 +15,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 import app as emm_app  # noqa: E402
+from fastapi.responses import JSONResponse, Response  # noqa: E402
 
 
 @asynccontextmanager
@@ -25,3 +26,24 @@ async def serverless_lifespan(_application):
 
 app = emm_app.app
 app.router.lifespan_context = serverless_lifespan
+
+
+@app.get("/", include_in_schema=False)
+async def api_root():
+    """Return a lightweight discovery document instead of a misleading 404."""
+    return JSONResponse({
+        "service": "Elite MatchMaster API",
+        "status_endpoint": "/status",
+        "health_endpoint": "/health",
+        "openapi_endpoint": "/openapi.json",
+        "docs_endpoint": "/docs",
+        "fixtures_endpoint": "/events/today",
+        "analysis_endpoint": "/analyze/match",
+        "note": "Health freshness depends on the separate persistent polling worker."
+    })
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Browsers request a favicon automatically; no icon asset is required."""
+    return Response(status_code=204)
