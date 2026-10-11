@@ -8,6 +8,7 @@ missing samples are reported as UNAVAILABLE, never fabricated.
 from __future__ import annotations
 
 import math
+import random
 import time
 import uuid
 from dataclasses import dataclass, asdict
@@ -112,7 +113,12 @@ def bootstrap_bot(samples: Iterable[float], bus: AgentBus) -> dict[str, Any]:
         result = {"status": "UNAVAILABLE", "n": len(xs), "reason": "At least 30 genuine observations are required; no synthetic observations are generated."}
         bus.publish("bootstrap_bot", "uncertainty_interval", "UNAVAILABLE", result)
         return result
-    result = {"status": "PASS", "n": len(xs), "mean": sum(xs) / len(xs), "empirical_q05": _quantile(xs, .05), "empirical_q50": _quantile(xs, .50), "empirical_q95": _quantile(xs, .95), "method": "empirical quantiles; no parametric bootstrap resamples implied"}
+    rng = random.Random(20261011)
+    means = []
+    # Resample only supplied observations; do not create synthetic match evidence.
+    for _ in range(1000):
+        means.append(sum(xs[rng.randrange(len(xs))] for _ in range(len(xs))) / len(xs))
+    result = {"status": "PASS", "n": len(xs), "mean": sum(xs) / len(xs), "empirical_q05": _quantile(xs, .05), "empirical_q50": _quantile(xs, .50), "empirical_q95": _quantile(xs, .95), "bootstrap_mean_ci_95": [_quantile(means, .025), _quantile(means, .975)], "bootstrap_replicates": 1000, "method": "percentile bootstrap CI for the sample mean; seeded for reproducibility"}
     bus.publish("bootstrap_bot", "uncertainty_interval", "PASS", result)
     return result
 
