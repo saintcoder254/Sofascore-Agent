@@ -1,4 +1,5 @@
 import math, time
+from failure_incident_ledger import FailureIncidentLedger
 from umios_specialists import UMIOSSpecialistEnsemble
 from basketball_volatility_guard import BasketballVolatilityGuard
 from market_arbiter import MarketArbiter
@@ -98,10 +99,24 @@ class UMIOSFinalArbiter:
         self.market_arbiter=MarketArbiter()
         self.failure_gate=HistoricalFailureGate()
         self.double_chance_gate=DoubleChanceFailureGate()
+        self.incident_ledger=FailureIncidentLedger()
+
+    def _persist_audit(self,event,prediction,final_state,failure_gate=None,double_chance_gate=None,blockers=None,warnings=None):
+        try:
+            return self.incident_ledger.record_decision(
+                event=event or {}, prediction=prediction or {}, final_state=final_state,
+                failure_gate=failure_gate or {}, double_chance_gate=double_chance_gate or {},
+                blockers=blockers or [], warnings=warnings or [],
+            )
+        except Exception as exc:
+            # A candidate must not be certified if its audit record cannot be persisted.
+            return {"audit_persisted":False,"error":type(exc).__name__}
 
     def decide(self,event,evidence,gate,prediction):
         if prediction.get("state")!="QUALIFIED_PREDICTION":
-            return {"state":"NO_BET","reason":"probability_engine_rejected","prediction":prediction}
+            audit=self._persist_audit(event,prediction,"NO_BET",blockers=["PROBABILITY_ENGINE_REJECTED"])
+            return {"state":"NO_BET","reason":"probability_engine_rejected","prediction":prediction,
+                    "incident_ledger":audit}
         specialist=self.specialists.evaluate(event,evidence,prediction)
         challenge=self.adversarial.evaluate(prediction,evidence,gate)
         consensus=self.consensus.evaluate(event,prediction)
@@ -141,6 +156,24 @@ class UMIOSFinalArbiter:
             challenge["blockers"].extend("HISTORICAL_FAILURE:"+b for b in failure_check["blockers"])
         if failure_check["warnings"]:
             challenge["warnings"].extend("HISTORICAL_FAILURE:"+w for w in failure_check["warnings"])
-        if challenge["state"]!="PASS" or consensus["state"]!="PASS" or failure_check["state"]=="BLOCK" or dc_check["state"]=="BLOCK":
-            return {"state":"NO_BET","reason":"arbiter_blocked","challenge":challenge,"consensus":consensus,"specialists":specialist,"market_arbiter":market_decision,"failure_gate":failure_check,"prediction":prediction}
-        return {"state":"FINAL_QUALIFIED","challenge":challenge,"consensus":consensus,"specialists":specialist,"market_arbiter":market_decision,"failure_gate":failure_check,"prediction":prediction}
+        blocked = (challenge["state"]!="PASS" or consensus["state"]!="PASS"
+                   or failure_check["state"]=="BLOCK" or dc_check["state"]=="BLOCK")
+        final_state = "NO_BET" if blocked else "FINAL_QUALIFIED"
+        audit=self._persist_audit(
+            event,prediction,final_state,failure_check,dc_check,
+            blockers=challenge.get("blockers",[]),warnings=challenge.get("warnings",[]),
+        )
+        if audit.get("audit_persisted") is False:
+            return {"state":"NO_BET","reason":"incident_ledger_write_failed",
+                    "ledger_error":audit.get("error"),"challenge":challenge,
+                    "consensus":consensus,"specialists":specialist,"market_arbiter":market_decision,
+                    "failure_gate":failure_check,"double_chance_gate":dc_check,"prediction":prediction}
+        if blocked:
+            return {"state":"NO_BET","reason":"arbiter_blocked","challenge":challenge,
+                    "consensus":consensus,"specialists":specialist,"market_arbiter":market_decision,
+                    "failure_gate":failure_check,"double_chance_gate":dc_check,
+                    "incident_ledger":audit,"prediction":prediction}
+        return {"state":"FINAL_QUALIFIED","challenge":challenge,"consensus":consensus,
+                "specialists":specialist,"market_arbiter":market_decision,
+                "failure_gate":failure_check,"double_chance_gate":dc_check,
+                "incident_ledger":audit,"prediction":prediction}
