@@ -93,6 +93,19 @@ class MarketArbiter:
         edge=self._num(sel.get("edge")); ev=self._num(sel.get("expected_value"))
         hist=prediction.get("history") or {}; sample=min(int(hist.get("home_games") or 0),int(hist.get("away_games") or 0))
         reasons=[]; warnings=[]; implied=self._implied(odds)
+        # Double-chance/DNB valuation is recomputed from the actual model probability
+        # and decimal price; missing fields cannot silently bypass the value gates.
+        if market in {"DOUBLE_CHANCE", "DNB"} and p is not None and implied is not None:
+            derived_edge = p - implied
+            derived_ev = p * odds - 1.0
+            if edge is None:
+                edge = derived_edge
+            elif abs(edge - derived_edge) > 0.03:
+                reasons.append("EDGE_FIELD_CONFLICTS_WITH_PROBABILITY_AND_PRICE")
+            if ev is None:
+                ev = derived_ev
+            elif abs(ev - derived_ev) > 0.03:
+                reasons.append("EV_FIELD_CONFLICTS_WITH_PROBABILITY_AND_PRICE")
         if market not in self.SUPPORTED:reasons.append("UNSUPPORTED_MARKET")
         if p is None:reasons.append("MODEL_PROBABILITY_MISSING")
         if odds is None or odds<=1:reasons.append("INVALID_ODDS")
@@ -114,3 +127,28 @@ class MarketArbiter:
         if p is not None and implied is not None and abs(p-implied)>0.12:warnings.append("LARGE_MODEL_MARKET_DIVERGENCE")
         if market=="TOTAL_GOALS" and not (prediction.get("probabilities") or {}).get("TOTAL_GOALS"):reasons.append("TOTAL_MODEL_MISSING")
         return {"state":"PASS" if not reasons else "BLOCK","version":self.VERSION,"market":market,"selection":selection,"odds":odds,"model_probability":p,"market_implied_probability":implied,"edge":edge,"expected_value":ev,"sample":sample,"independent_market_sources":sources,"tail_risk":tail,"reasons":reasons,"warnings":warnings,"generated_at":time.time()}
+
+
+def test_double_chance_missing_edge_and_ev_are_derived_and_blocked_when_thin():
+    prediction = {
+        "selection": {"market": "DOUBLE_CHANCE", "selection": "X2",
+                      "odds": 1.44, "model_probability": 0.715},
+        "history": {"home_games": 10, "away_games": 10},
+    }
+    result = MarketArbiter().evaluate(prediction, {})
+    assert result["state"] == "BLOCK"
+    assert "EDGE_BELOW_GATE" in result["reasons"]
+    assert "EV_BELOW_GATE" in result["reasons"]
+    assert abs(result["edge"] - (0.715 - 1 / 1.44)) < 1e-9
+    assert abs(result["expected_value"] - (0.715 * 1.44 - 1)) < 1e-9
+
+
+def test_double_chance_conflicting_supplied_edge_is_blocked():
+    prediction = {
+        "selection": {"market": "DOUBLE_CHANCE", "selection": "X2",
+                      "odds": 1.60, "model_probability": 0.70,
+                      "edge": 0.20, "expected_value": 0.12},
+        "history": {"home_games": 10, "away_games": 10},
+    }
+    result = MarketArbiter().evaluate(prediction, {})
+    assert "EDGE_FIELD_CONFLICTS_WITH_PROBABILITY_AND_PRICE" in result["reasons"]
