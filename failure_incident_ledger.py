@@ -19,7 +19,39 @@ class FailureIncidentLedger:
     _lock = threading.Lock()
 
     def __init__(self, path: Optional[str] = None):
+        # DATABASE_URL selects durable PostgreSQL (e.g. Neon or Supabase).
+        # Explicit path selects local JSONL for tests/development.
+        self.database_url = None if path else os.getenv("DATABASE_URL")
         self.path = Path(path or os.getenv("EMM_FAILURE_LEDGER_PATH", "data/failure_incident_ledger.jsonl"))
+        if self.database_url:
+            self._ensure_database()
+
+    def _connect(self):
+        try:
+            import psycopg
+        except ImportError as exc:
+            raise RuntimeError("DATABASE_URL is set but psycopg is not installed") from exc
+        return psycopg.connect(self.database_url, connect_timeout=5)
+
+    def _ensure_database(self) -> None:
+        # JSONB preserves the complete immutable event while event_id supports uniqueness.
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS emm_failure_incident_ledger (
+                        sequence_id BIGSERIAL PRIMARY KEY,
+                        event_id TEXT NOT NULL UNIQUE,
+                        record_type TEXT NOT NULL,
+                        market TEXT,
+                        selection TEXT,
+                        references_event_id TEXT,
+                        payload JSONB NOT NULL,
+                        recorded_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS emm_failure_market_selection_idx ON emm_failure_incident_ledger (market, selection)")
+                cur.execute("CREATE INDEX IF NOT EXISTS emm_failure_reference_idx ON emm_failure_incident_ledger (references_event_id)")
+            conn.commit()
 
     def append(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """Append one immutable event; returns the exact persisted event."""
@@ -28,6 +60,20 @@ class FailureIncidentLedger:
         event.setdefault("ledger_version", self.VERSION)
         event.setdefault("recorded_at_utc", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         event.setdefault("record_type", "prediction_audit")
+        if self.database_url:
+            # A failed durable write propagates to the arbiter, which must fail closed.
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO emm_failure_incident_ledger
+                           (event_id, record_type, market, selection, references_event_id, payload)
+                           VALUES (%s, %s, %s, %s, %s, %s::jsonb)""",
+                        (event["event_id"], event["record_type"], event.get("market"),
+                         event.get("selection"), event.get("references_event_id"),
+                         json.dumps(event, sort_keys=True, separators=(",", ":"), default=str)),
+                    )
+                conn.commit()
+            return event
         line = json.dumps(event, sort_keys=True, separators=(",", ":"), default=str)
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,6 +169,11 @@ class FailureIncidentLedger:
         }
 
     def read(self) -> list[Dict[str, Any]]:
+        if self.database_url:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT payload FROM emm_failure_incident_ledger ORDER BY sequence_id")
+                    return [row[0] for row in cur.fetchall()]
         if not self.path.exists():
             return []
         rows = []
