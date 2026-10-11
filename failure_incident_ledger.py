@@ -61,9 +61,10 @@ class FailureIncidentLedger:
         event.setdefault("recorded_at_utc", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         event.setdefault("record_type", "prediction_audit")
         # Index market/selection at the event level for historical diagnostics.
-        selection_details = event.get("selection") or {}
-        event.setdefault("market", selection_details.get("market"))
-        event.setdefault("selection", selection_details.get("selection"))
+        selection_details = event.get("selection")
+        if isinstance(selection_details, dict):
+            event.setdefault("market", selection_details.get("market"))
+            event.setdefault("selection", selection_details.get("selection"))
         if self.database_url:
             # A failed durable write propagates to the arbiter, which must fail closed.
             with self._connect() as conn:
