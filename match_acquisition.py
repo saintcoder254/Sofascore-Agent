@@ -7,13 +7,13 @@ class MatchAcquisitionEngine:
     @staticmethod
     def _team_key(value):
         value = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode().lower()
-        value = re.sub(r"\b(fc|sc|cf|afc|club|football|soccer)\b", " ", value)
+        value = re.sub(r"\b(fc|sc|cf|afc|sk|fk|club|football|soccer)\b", " ", value)
         return re.sub(r"[^a-z0-9]", "", value)
 
     @classmethod
     def _same_team(cls, left, right):
         a, b = cls._team_key(left), cls._team_key(right)
-        return bool(a and b and (a == b or (min(len(a), len(b)) >= 5 and (a in b or b in a))))
+        return bool(a and b and a == b)
 
     @classmethod
     def _same_fixture(cls, target, candidate):
@@ -161,6 +161,11 @@ class MatchAcquisitionEngine:
 
     async def acquire(self,event_id):
         bundle=await self.enrich_event(event_id)
+        # FotMob acquisition already performs independent fixture verification and
+        # builds its own trust envelope. Do not overwrite that gate with the
+        # generic SofaScore path, which can mislabel the source and drop blockers.
+        if str(event_id).startswith("fotmob:"):
+            return bundle
         try:
             bundle["verification"]=await self.fusion.verify_futbol24()
             bundle["final_results"]=await self.fusion.verify_final_results(bundle["verification"])
