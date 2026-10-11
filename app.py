@@ -146,6 +146,26 @@ async def lifespan(app):
     for t in tasks:t.cancel()
     await asyncio.gather(*tasks,return_exceptions=True);await adapter.close();case_databases.close()
 app=FastAPI(title="Elite MatchMaster Feed Fusion Acquisition Agent",lifespan=lifespan)
+
+@app.get("/", include_in_schema=False)
+async def api_root():
+    """Expose a root discovery response for deployment and connectivity checks."""
+    return {
+        "service": "Elite MatchMaster API",
+        "status": "/status",
+        "health": "/health",
+        "openapi": "/openapi.json",
+        "docs": "/docs",
+        "fixtures": "/events/today",
+        "analysis": "/analyze/match",
+        "note": "Health freshness requires a separately running persistent polling worker.",
+    }
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    from fastapi.responses import Response
+    return Response(status_code=204)
 def telemetry_payload():
     now=time.time();age=None if state["last_success"] is None else round(now-state["last_success"],1);fresh_enough=state["last_success"] is not None and age<=STALE_AFTER
     return {"service":"feed-fusion-acquisition-agent","source":state["active_source"] or adapter.active_source,"running":state["running"],"poll_interval_seconds":POLL_SECONDS,"stale_after_seconds":STALE_AFTER,"last_success_age_seconds":age,"data_fresh":fresh_enough,"poller":dict(state),"fusion":dict(adapter.metrics),"scores24":dict(adapter.scores24.metrics),"evolution":evolution.status(),"learning":{"running":state["learning_running"],"prediction_count":store.prediction_count(),"resolved_count":store.resolved_prediction_count(),"performance":store.performance_summary()},"source_learning":{"running":state["source_learning_running"],"min_samples":SOURCE_MIN_SAMPLES,"scores":source_learning.status()},"verification_learning":{"running":state["verification_learning_running"],"min_sources":VERIFICATION_MIN_SOURCES,"last_run_at":state["last_verification_learning_at"]},"enrichment":{"running":state["enrichment_running"],"interval_seconds":ENRICH_SECONDS,"max_fixtures":ENRICH_MAX_FIXTURES,"last_run_at":state["last_enrichment_at"],"items":state["enrichment_items"],"auto_analyze":AUTO_ANALYZE,"auto_analyze_items":state.get("auto_analyze_items",0),"last_auto_analyze_at":state.get("last_auto_analyze_at"),"arbiter_passes":state.get("arbiter_passes",0),"arbiter_blocks":state.get("arbiter_blocks",0)},"odds_intelligence":odds.status(),"generated_at":now}
