@@ -3,7 +3,7 @@
 ## What changed
 - Historical failure gate v2 validates the market, selection, probability, decimal odds and supplied edge against the probability/price-derived edge; missing justification and unexplained market disagreement block.
 - Double-chance/DNB gate v2 separates probability edge (percentage points) from expected value, enforces probability/edge/EV floors, requires an adverse-branch test, regime sensitivity and market confirmation, and rejects a stress branch inconsistent with X2/1X.
-- `failure_incident_ledger.py` appends each audited decision and subsequent settlement as JSON Lines. It never rewrites historical rows.
+- `failure_incident_ledger.py` appends each audited decision and subsequent settlement as JSON Lines. It never rewrites historical rows. The arbiter reads settled outcomes by market/selection; after at least 20 calibrated settled examples, a predicted-vs-observed hit-rate gap of 10 percentage points or more blocks the candidate.
 - `EMM_FAILURE_LEDGER_PATH` can point the ledger at a persistent writable path.
 
 ## Double-chance price arithmetic
