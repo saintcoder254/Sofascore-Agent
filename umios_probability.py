@@ -187,12 +187,16 @@ class UMIOSProbabilityEngine:
             regime=self.regime.classify(event,evidence)
             result=self.basketball.run(event,evidence,gate,simulations=simulations)
             result["competition_regime"]=regime
+            actual_trials=int(result.get("simulations") or 0)
+            result["monte_carlo_audit"]={"state":"EXECUTED" if actual_trials>=self.MIN_MONTE_CARLO_SAMPLES else "FAILED","trials":actual_trials,"minimum_required":self.MIN_MONTE_CARLO_SAMPLES,"method":"basketball score/total Monte Carlo","gate":"PASS" if actual_trials>=self.MIN_MONTE_CARLO_SAMPLES else "MONTE_CARLO_GATE_FAILED"}
+            if actual_trials < self.MIN_MONTE_CARLO_SAMPLES:
+                result["state"]="NO_BET"; result["reason"]="MONTE_CARLO_GATE_FAILED"; result["selection"]=None
             if result.get("state")=="QUALIFIED_PREDICTION" and result.get("selection"):
                 sample=int((result.get("history") or {}).get("minimum_games") or 0)
                 if sample < int(regime.get("min_history",5)):
                     result["state"]="NO_BET"; result["reason"]="competition_regime_history_gate"; result["selection"]=None
             return result
-        if gate.get("state")!="QUALIFIED":return {"state":"NO_BET","reason":"qualification_gate_blocked","candidates":[]}
+        if gate.get("state")!="QUALIFIED":return {"state":"NO_BET","reason":"qualification_gate_blocked","candidates":[],"simulations":0,"monte_carlo_audit":{"state":"BLOCKED","trials":0,"minimum_required":self.MIN_MONTE_CARLO_SAMPLES,"gate":"MONTE_CARLO_GATE_FAILED","reason":"fixture qualification gate did not pass; simulation was not executed"}}
         home=event.get("homeTeam") or {}; away=event.get("awayTeam") or {}
         hh=self._team_rates(home.get("id"),(evidence.get("history",{}).get("home") or {}).get("events",[]))
         aa=self._team_rates(away.get("id"),(evidence.get("history",{}).get("away") or {}).get("events",[]))
