@@ -12,6 +12,7 @@ permissions:
 env:
   SERVICE_NAME: elite-matchmaster
   REGION: europe-west1
+  AR_REPOSITORY: elite-matchmaster
   IMAGE_NAME: europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/elite-matchmaster/app
 
 jobs:
@@ -30,8 +31,24 @@ jobs:
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+      - name: Enable required Google Cloud APIs
+        run: |
+          gcloud services enable \
+            artifactregistry.googleapis.com \
+            cloudbuild.googleapis.com \
+            run.googleapis.com \
+            --project "${{ secrets.GCP_PROJECT_ID }}"
+
+      - name: Ensure Artifact Registry repository exists
+        run: |
+          gcloud artifacts repositories describe "${AR_REPOSITORY}" \
+            --location "${REGION}" \
+            --project "${{ secrets.GCP_PROJECT_ID }}" >/dev/null 2>&1 || \
+          gcloud artifacts repositories create "${AR_REPOSITORY}" \
+            --repository-format=docker \
+            --location "${REGION}" \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --description="Elite MatchMaster container images"
 
       - name: Build and push container
         run: |
@@ -44,6 +61,5 @@ jobs:
             --region "${REGION}" \
             --project "${{ secrets.GCP_PROJECT_ID }}" \
             --platform managed \
-            --allow-unauthenticated \
             --port 8080 \
             --quiet
