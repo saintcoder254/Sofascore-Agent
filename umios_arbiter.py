@@ -156,7 +156,9 @@ class UMIOSFinalArbiter:
             challenge["blockers"].extend("HISTORICAL_FAILURE:"+b for b in failure_check["blockers"])
         if failure_check["warnings"]:
             challenge["warnings"].extend("HISTORICAL_FAILURE:"+w for w in failure_check["warnings"])
-        blocked = (challenge["state"]!="PASS" or consensus["state"]!="PASS"
+        # Downstream gates append blockers after the adversarial layer has set its
+        # initial state, so the blocker list—not the stale initial state—is authoritative.
+        blocked = (bool(challenge.get("blockers")) or consensus["state"]!="PASS"
                    or failure_check["state"]=="BLOCK" or dc_check["state"]=="BLOCK")
         final_state = "NO_BET" if blocked else "FINAL_QUALIFIED"
         audit=self._persist_audit(
