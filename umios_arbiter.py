@@ -123,6 +123,14 @@ class UMIOSFinalArbiter:
         sel=prediction.get("selection") or {}
         failure_evidence=dict(evidence.get("failure_gate") or {})
         failure_evidence.setdefault("selection_justification", prediction.get("selection_justification"))
+        try:
+            failure_evidence.setdefault(
+                "historical_market_summary",
+                self.incident_ledger.historical_summary(sel.get("market"), sel.get("selection")),
+            )
+        except Exception:
+            # A corrupt/unreadable incident ledger cannot be silently interpreted as a clean history.
+            failure_evidence["calibration_failed"] = True
         failure_check=self.failure_gate.evaluate(sel, failure_evidence)
         dc_check=self.double_chance_gate.evaluate(sel, failure_evidence)
         market=str(sel.get("market") or "")
