@@ -1,55 +1,105 @@
-"""OMEGA Calibration and Model Health Engine v1.
+"""OMEGA calibration and model-health metrics.
 
-Point-in-time evaluation utilities. Never rewrites historical predictions with
-later information. Supports Brier, log loss, reliability bins, calibration
-error, and model-level drift summaries.
+Metrics are computed only from finite, in-range probability/outcome pairs.
+The engine supports binary one-vs-rest outcomes and soft labels in [0, 1].
 """
 import math
 from collections import defaultdict
 
+
 class CalibrationEngine:
-    VERSION="OMEGA-CALIBRATION-v1"
+    VERSION = "OMEGA-CALIBRATION-v2"
 
     @staticmethod
-    def brier(rows):
-        vals=[(float(r["p"]),float(r["y"])) for r in rows if r.get("p") is not None and r.get("y") is not None]
-        return sum((p-y)**2 for p,y in vals)/len(vals) if vals else None
+    def _valid_rows(rows):
+        valid = []
+        invalid = 0
+        for row in rows or []:
+            try:
+                p = float(row["p"])
+                y = float(row["y"])
+            except (KeyError, TypeError, ValueError, OverflowError):
+                invalid += 1
+                continue
+            if not math.isfinite(p) or not math.isfinite(y) or not (0.0 <= p <= 1.0) or not (0.0 <= y <= 1.0):
+                invalid += 1
+                continue
+            valid.append({"p": p, "y": y})
+        return valid, invalid
 
-    @staticmethod
-    def log_loss(rows):
-        vals=[(float(r["p"]),float(r["y"])) for r in rows if r.get("p") is not None and r.get("y") is not None]
-        if not vals:return None
-        return sum(-y*math.log(max(1e-12,min(1-1e-12,p)))-(1-y)*math.log(max(1e-12,min(1-1e-12,p))) for p,y in vals)/len(vals)
+    @classmethod
+    def brier(cls, rows):
+        vals, _ = cls._valid_rows(rows)
+        return sum((r["p"] - r["y"]) ** 2 for r in vals) / len(vals) if vals else None
 
-    @staticmethod
-    def reliability(rows,bins=None):
-        bins=bins or [0.50,0.55,0.60,0.65,0.70,0.75,0.80,0.85,0.90,0.95,1.01]
-        out=[]
-        for lo,hi in zip(bins[:-1],bins[1:]):
-            x=[r for r in rows if r.get("p") is not None and lo<=float(r["p"])<hi]
-            if not x:continue
-            actual=sum(float(r["y"]) for r in x)/len(x); pred=sum(float(r["p"]) for r in x)/len(x)
-            out.append({"low":lo,"high":hi,"samples":len(x),"predicted":pred,"actual":actual,"gap":actual-pred})
+    @classmethod
+    def log_loss(cls, rows):
+        vals, _ = cls._valid_rows(rows)
+        if not vals:
+            return None
+        eps = 1e-15
+        total = 0.0
+        for r in vals:
+            p = min(1.0 - eps, max(eps, r["p"]))
+            y = r["y"]
+            total += -y * math.log(p) - (1.0 - y) * math.log(1.0 - p)
+        return total / len(vals)
+
+    @classmethod
+    def reliability(cls, rows, bins=None):
+        vals, _ = cls._valid_rows(rows)
+        if bins is None:
+            bins = [i / 10 for i in range(11)]
+        out = []
+        for i, (lo, hi) in enumerate(zip(bins[:-1], bins[1:])):
+            # Include p=1.0 in the final bin; other bins are half-open.
+            selected = [r for r in vals if lo <= r["p"] < hi or (i == len(bins) - 2 and r["p"] == hi)]
+            if not selected:
+                continue
+            actual = sum(r["y"] for r in selected) / len(selected)
+            predicted = sum(r["p"] for r in selected) / len(selected)
+            out.append({
+                "low": lo, "high": hi, "samples": len(selected),
+                "predicted": predicted, "actual": actual, "gap": actual - predicted,
+            })
         return out
 
-    def evaluate(self,rows):
-        rel=self.reliability(rows)
-        ece=sum((x["samples"]/sum(r["samples"] for r in rel))*abs(x["gap"]) for x in rel) if rel else None
-        return {"version":self.VERSION,"samples":len(rows),"brier":self.brier(rows),"log_loss":self.log_loss(rows),"ece":ece,"reliability":rel}
+    def evaluate(self, rows):
+        vals, invalid = self._valid_rows(rows)
+        rel = self.reliability(vals)
+        total = sum(x["samples"] for x in rel)
+        ece = sum((x["samples"] / total) * abs(x["gap"]) for x in rel) if total else None
+        return {
+            "version": self.VERSION,
+            "samples": len(vals),
+            "invalid_rows": invalid,
+            "brier": self.brier(vals),
+            "log_loss": self.log_loss(vals),
+            "ece": ece,
+            "reliability": rel,
+        }
 
-    def compare_models(self,ledger):
-        groups=defaultdict(list)
-        for r in ledger:
-            groups[str(r.get("model") or "unknown")].append(r)
-        out=[]
-        for model,rows in groups.items():
-            m=self.evaluate(rows); out.append({"model":model,**m})
-        return sorted(out,key=lambda x:(x["log_loss"] is None,x["log_loss"] or 999))
+    def compare_models(self, ledger):
+        groups = defaultdict(list)
+        for row in ledger or []:
+            groups[str(row.get("model") or "unknown")].append(row)
+        out = []
+        for model, rows in groups.items():
+            out.append({"model": model, **self.evaluate(rows)})
+        return sorted(out, key=lambda x: (x["log_loss"] is None, x["log_loss"] or 999))
+
 
 class ModelHealthEngine:
-    VERSION="OMEGA-MODEL-HEALTH-v1"
-    def assess(self,metrics):
-        flags=[]
-        if metrics.get("ece") is not None and metrics["ece"]>0.08:flags.append("CALIBRATION_DRIFT")
-        if metrics.get("brier") is not None and metrics["brier"]>0.25:flags.append("WEAK_PROBABILITY_QUALITY")
-        return {"version":self.VERSION,"state":"DEGRADED" if flags else "HEALTHY","flags":flags}
+    VERSION = "OMEGA-MODEL-HEALTH-v1"
+
+    def assess(self, metrics):
+        flags = []
+        if metrics.get("ece") is not None and metrics["ece"] > 0.08:
+            flags.append("CALIBRATION_DRIFT")
+        if metrics.get("brier") is not None and metrics["brier"] > 0.25:
+            flags.append("WEAK_PROBABILITY_QUALITY")
+        if metrics.get("samples", 0) == 0:
+            flags.append("NO_VALIDATION_SAMPLES")
+        if metrics.get("invalid_rows", 0):
+            flags.append("INVALID_VALIDATION_ROWS")
+        return {"version": self.VERSION, "state": "DEGRADED" if flags else "HEALTHY", "flags": flags}
