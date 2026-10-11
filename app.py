@@ -142,6 +142,15 @@ async def enrichment_loop():
         await asyncio.sleep(ENRICH_SECONDS)
 @asynccontextmanager
 async def lifespan(app):
+    # Vercel serves request-scoped serverless functions. Do not start persistent
+    # polling/learning loops in each cold-started function instance.
+    if os.getenv("VERCEL") == "1":
+        try:
+            yield
+        finally:
+            await adapter.close()
+            case_databases.close()
+        return
     tasks=[asyncio.create_task(x()) for x in (polling_loop,evolution_loop,research_loop,learning_loop,source_learning_loop,verification_loop,enrichment_loop)];yield
     for t in tasks:t.cancel()
     await asyncio.gather(*tasks,return_exceptions=True);await adapter.close();case_databases.close()
