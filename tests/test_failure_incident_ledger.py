@@ -23,3 +23,27 @@ def test_invalid_outcome_rejected(tmp_path):
         pass
     else:
         raise AssertionError("invalid outcome must raise ValueError")
+
+
+def test_historical_summary_joins_settlements_and_excludes_unsettled(tmp_path):
+    ledger = FailureIncidentLedger(str(tmp_path / "incidents.jsonl"))
+    first = ledger.record_decision(
+        event={"id": 42, "homeTeam": {"name": "Home"}, "awayTeam": {"name": "Away"}},
+        prediction={"selection": {"market": "DOUBLE_CHANCE", "selection": "X2",
+                                  "odds": 1.6, "model_probability": 0.70}},
+        final_state="FINAL_QUALIFIED", failure_gate={}, double_chance_gate={},
+        blockers=[], warnings=[],
+    )
+    ledger.record_decision(
+        event={"id": 43, "homeTeam": {"name": "Home"}, "awayTeam": {"name": "Away"}},
+        prediction={"selection": {"market": "DOUBLE_CHANCE", "selection": "X2",
+                                  "odds": 1.6, "model_probability": 0.70}},
+        final_state="FINAL_QUALIFIED", failure_gate={}, double_chance_gate={},
+        blockers=[], warnings=[],
+    )
+    ledger.record_settlement(first["event_id"], outcome=1)
+    summary = ledger.historical_summary("DOUBLE_CHANCE", "X2")
+    assert summary["settled_samples"] == 1
+    assert summary["wins"] == 1
+    assert summary["probability_samples"] == 1
+    assert summary["diagnostic_ready"] is False
