@@ -1,0 +1,60 @@
+name: Elite MatchMaster Agent Swarm
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+  pull_request:
+    paths:
+      - ".github/workflows/agent-swarm.yml"
+      - "tools/agent_swarm.py"
+      - "src/**"
+      - "tests/**"
+      - "docs/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/agent-swarm.yml"
+      - "tools/agent_swarm.py"
+      - "src/**"
+      - "tests/**"
+      - "docs/**"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: elite-matchmaster-agent-swarm
+  cancel-in-progress: false
+
+jobs:
+  swarm:
+    name: Parallel audit agents and final arbiter
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run concurrent agents
+        run: python tools/agent_swarm.py
+      - name: Publish shared findings
+        uses: actions/upload-artifact@v4
+        with:
+          name: elite-matchmaster-agent-swarm-report
+          path: |
+            artifacts/agent-findings.json
+            artifacts/agent-swarm-report.md
+          if-no-files-found: error
+          retention-days: 30
+      - name: Add report to workflow summary
+        if: always()
+        run: |
+          if [ -f artifacts/agent-swarm-report.md ]; then
+            cat artifacts/agent-swarm-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Agent swarm did not produce a report." >> "$GITHUB_STEP_SUMMARY"
+          fi
