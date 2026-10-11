@@ -206,7 +206,14 @@ async def record_umios_predictions(item:PredictionBatchIn):
     for p in item.predictions:store.add_prediction(prediction_id=p.prediction_id,fixture_id=p.fixture_id,market=p.market, predicted_probability=p.predicted_probability,selection=p.selection,odds=p.odds,model_version=p.model_version,features=p.features)
     return {"ok":True,"source":"umios","recorded":len(item.predictions),"prediction_ids":[p.prediction_id for p in item.predictions]}
 @app.post("/predictions/{prediction_id}/outcome")
-async def record_outcome(prediction_id:str,item:OutcomeIn):store.record_outcome(prediction_id,item.outcome);return {"ok":True,"prediction_id":prediction_id,"outcome":item.outcome}
+async def record_outcome(prediction_id: str, item: OutcomeIn):
+    try:
+        store.record_outcome(prediction_id, item.outcome)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="prediction_not_found")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"ok": True, "prediction_id": prediction_id, "outcome": item.outcome}
 @app.post("/predictions/{prediction_id}/closing-odds")
 async def record_closing_odds(prediction_id:str,item:ClosingOddsIn):
     try: store.record_closing_odds(prediction_id,item.closing_odds,item.closing_at,item.closing_source)
