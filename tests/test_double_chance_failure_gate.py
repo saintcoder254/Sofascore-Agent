@@ -53,4 +53,4 @@ def test_missing_edge_field_is_derived_from_price_not_trusted():
         {"market": "DOUBLE_CHANCE", "selection": "X2", "model_probability": 0.70, "odds": 1.60},
         stress(),
     )
-    assert result["inputs"]["derived_probability_edge"] == 0.075
+    assert abs(result["inputs"]["derived_probability_edge"] - 0.075) < 1e-9
