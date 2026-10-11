@@ -106,6 +106,14 @@ class HistoricalFailureGate:
             warn("F12_CALIBRATION_INSUFFICIENT", "F12")
         if evidence.get("calibration_failed"):
             block("F12_CALIBRATION_FAILED", "F12")
+        historical = evidence.get("historical_market_summary") or {}
+        if historical.get("diagnostic_ready") is True:
+            observed = self._num(historical.get("observed_hit_rate"))
+            predicted = self._num(historical.get("mean_predicted_probability"))
+            if observed is None or predicted is None:
+                block("F12_HISTORICAL_CALIBRATION_DATA_INVALID", "F12")
+            elif predicted - observed >= 0.10:
+                block("FH_HISTORICAL_UNDERPERFORMANCE", "F12")
         if not str(evidence.get("selection_justification") or "").strip():
             block("F9_SELECTION_JUSTIFICATION_MISSING", "F9")
 
