@@ -85,8 +85,9 @@ class VercelOriginalPathMiddleware:
                     )
             if original_path:
                 original_path = original_path.split("?", 1)[0]
-                if not original_path.startswith("/"):
-                    original_path = "/" + original_path
+                # Normalize both "openapi.json" and "//openapi.json" to
+                # the canonical "/openapi.json" path after rewrite expansion.
+                original_path = "/" + original_path.lstrip("/")
                 scope = dict(scope)
                 scope["path"] = original_path
                 scope["raw_path"] = original_path.encode("utf-8")
