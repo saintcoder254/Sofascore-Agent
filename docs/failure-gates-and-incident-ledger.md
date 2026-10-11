@@ -12,7 +12,7 @@ For decimal odds (o) and model probability (p):
 - probability edge = (p - 1/o)
 - expected value per unit = (p 	imes o - 1)
 
-The defaults require p >= 0.60, probability edge >= 0.03, and EV >= 0.03. These are separate checks. At p=0.715 and odds=1.44, the edge is about 2.06 percentage points and EV is 2.96%, so both strict 3% floors fail.
+The double-chance gate defaults require p >= 0.60, probability edge >= 0.03, and EV >= 0.03. These are separate checks. The upstream Market Arbiter applies its stricter general thresholds (edge >= 0.05 and EV >= 0.06), so passing the DC-specific gate alone is never sufficient. At p=0.715 and odds=1.44, the edge is about 2.06 percentage points and EV is 2.96%, so both strict 3% floors fail.
 
 ## Ledger format and operation
 Each prediction audit stores fixture, market, selection, odds, raw probability, model version, both gate results, final state, blockers and warnings. Once the actual result is known, append a settlement event with `references_event_id`, `outcome` (1=win, 0=loss), final score and notes. Never backfill an outcome into the original prediction row; this preserves audit history and avoids hindsight contamination.
