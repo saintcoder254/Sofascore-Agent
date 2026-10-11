@@ -106,17 +106,20 @@ class FailureIncidentLedger:
             outcomes.append({"outcome": int(outcome), "probability": probability})
         calibrated = [row for row in outcomes if row["probability"] is not None and 0 <= row["probability"] <= 1]
         n = len(outcomes)
+        calibrated_n = len(calibrated)
         return {
             "market": str(market or "").upper(),
             "selection": str(selection or "").upper(),
             "settled_samples": n,
             "wins": sum(row["outcome"] for row in outcomes),
             "losses": sum(1 - row["outcome"] for row in outcomes),
-            "observed_hit_rate": (sum(row["outcome"] for row in outcomes) / n) if n else None,
-            "probability_samples": len(calibrated),
-            "mean_predicted_probability": (sum(row["probability"] for row in calibrated) / len(calibrated)) if calibrated else None,
+            "overall_observed_hit_rate": (sum(row["outcome"] for row in outcomes) / n) if n else None,
+            # Compare predicted and observed probabilities on the same subset only.
+            "observed_hit_rate": (sum(row["outcome"] for row in calibrated) / calibrated_n) if calibrated_n else None,
+            "probability_samples": calibrated_n,
+            "mean_predicted_probability": (sum(row["probability"] for row in calibrated) / calibrated_n) if calibrated_n else None,
             "min_samples_for_diagnostic": max(20, int(min_samples)),
-            "diagnostic_ready": len(calibrated) >= max(20, int(min_samples)),
+            "diagnostic_ready": calibrated_n >= max(20, int(min_samples)),
         }
 
     def read(self) -> list[Dict[str, Any]]:
