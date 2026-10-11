@@ -1,0 +1,62 @@
+from basketball_omega.clv import verify_clv
+from basketball_omega.models.market_residual import MarketResidualEngine
+from basketball_omega.promotion_markets import MarketPromotionGate
+
+class R:
+    entry_spread=-4.0
+    closing_spread=-5.0
+    cutoff_at=100.0
+    closing_at=99.0
+
+def test_clv_is_unverified_without_enough_timestamped_samples():
+    e=verify_clv([R()]*10,min_samples=250)
+    assert e.status=="UNVERIFIED"
+    assert e.mean_clv is None
+
+def test_residual_engine_uses_market_as_prior():
+    x=MarketResidualEngine(0.35).estimate(8.0,-4.0)
+    assert x.market_margin==4.0
+    assert x.residual==4.0
+    assert x.blended_margin==5.4
+
+def test_market_gate_can_promote_totals_independently():
+    class M:
+        samples=1000; brier=.20; log_loss=.59; margin_mae=9; total_mae=15; clv_samples=1000; clv_mean=.1; chronological=True
+    class C:
+        samples=1000; brier=.20; log_loss=.59; margin_mae=10; total_mae=14; clv_samples=0; clv_mean=0; chronological=True
+    d=MarketPromotionGate(require_clv=False).evaluate("totals",M(),C())
+    assert d.eligible
+
+
+def test_clv_rejects_close_before_cutoff():
+    class R:
+        entry_spread=-4.0
+        closing_spread=-5.0
+        cutoff_at=100.0
+        closing_at=99.0
+        event_at=120.0
+        clv_side_spread="home"
+    e=verify_clv([R()]*300,min_samples=250)
+    assert e.status=="UNVERIFIED"
+    assert e.samples==0
+
+def test_clv_requires_positive_confidence_bound_for_promotion():
+    class M:
+        samples=300; brier=.20; log_loss=.59; margin_mae=9; total_mae=15
+    class C:
+        samples=300; brier=.20; log_loss=.59; margin_mae=9; total_mae=14
+        clv_samples=300; clv_mean=.01; clv_lower_ci=-.01
+    d=MarketPromotionGate(require_clv=True).evaluate_totals(M(),C())
+    assert not d.eligible
+    assert "clv_ci_not_positive" in d.reasons
+
+from basketball_omega.evaluation import evaluate
+
+def test_evaluator_does_not_count_pre_cutoff_clv():
+    class R:
+        predicted_home_prob=.6; actual_home_win=1; predicted_margin=5; actual_margin=4
+        predicted_total=220; actual_total=218; cutoff_at=100; closing_at=99; event_at=120
+        entry_spread=-4; closing_spread=-5; clv_side_spread="home"
+    e=evaluate([R()])
+    assert e.clv_samples==0
+    assert e.clv_mean==0.0
