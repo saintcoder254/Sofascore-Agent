@@ -4,7 +4,7 @@ Continuous football data acquisition and pre-analysis qualification service for 
 
 ## Acquisition pipeline
 
-The service polls the primary SofaScore feed every 60 seconds by default and uses ESPN/FotMob as fallback sources, with Futbol24 and Scores24 verification. Event snapshots are persisted to the Render-mounted database.
+The service polls the primary SofaScore feed every 60 seconds by default and uses ESPN/FotMob as fallback sources, with Futbol24 and Scores24 verification. Event snapshots are persisted to the configured database.
 
 For a requested fixture, the enriched acquisition engine pulls:
 - canonical event/status/venue identity
@@ -41,16 +41,19 @@ Telemetry records poll count, source success/failure, freshness, request latency
 
 ## Persistent storage
 
-Render mounts /data as persistent storage and the application uses /data/matchmaster.db. This keeps snapshots, predictions, outcomes, external observations, source scores, and learning history across deploys.
+The application uses `DATABASE_PATH` for its SQLite database (default: `matchmaster.db`) and `CASE_DATABASE_DIR` for fixture case files (default: `case_databases`). Configure these paths for the runtime environment and mount persistent storage where durable history is required. Without persistent storage, local database files may not survive instance replacement or redeployment.
 
 ## Local
 
+```bash
 pip install -r requirements.txt
 uvicorn app:app --host 0.0.0.0 --port 8000
+```
 
 Default poll interval is 60 seconds. Override with POLL_SECONDS. Default stale threshold is 180 seconds (STALE_AFTER_SECONDS).
 
 ## UMIOS TITAN core analysis
+
 The service now includes a bounded continuous enrichment loop for today's fixtures. It refreshes the nearest eligible fixtures every 300 seconds by default, collecting the canonical event, statistics, shotmap, incidents, lineups, and odds evidence. Configuration is controlled by ENRICH_SECONDS and ENRICH_MAX_FIXTURES.
 
 The /analyze/fixture/{event_id} endpoint passes a qualified evidence bundle into umios_core.py. The core normalizes numeric/statistical evidence, groups available odds into supported market families, de-vigs market-implied probabilities, and exposes a conservative candidate set. It deliberately labels these as BENCHMARK_ONLY until an independently trained probability model is connected; market odds are not treated as a model prediction.
