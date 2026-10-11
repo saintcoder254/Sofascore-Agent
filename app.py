@@ -24,6 +24,7 @@ from omega_promotion_gate import OmegaPromotionGate
 from oos_model_tournament import OOSModelTournament
 from league_intelligence_engine import LeagueIntelligenceEngine
 from case_database import CaseDatabaseManager
+from validation_method_swarm import router as validation_swarm_router
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger=logging.getLogger("emm.poller")
@@ -155,6 +156,7 @@ async def lifespan(app):
     for t in tasks:t.cancel()
     await asyncio.gather(*tasks,return_exceptions=True);await adapter.close();case_databases.close()
 app=FastAPI(title="Elite MatchMaster Feed Fusion Acquisition Agent",lifespan=lifespan)
+app.include_router(validation_swarm_router)
 
 @app.get("/", include_in_schema=False)
 async def api_root():
