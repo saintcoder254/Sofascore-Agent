@@ -80,6 +80,45 @@ class FailureIncidentLedger:
             "notes": notes,
         })
 
+    def historical_summary(self, market: str, selection: str, min_samples: int = 20) -> Dict[str, Any]:
+        """Summarize settled matching picks without treating unsettled forecasts as losses."""
+        rows = self.read()
+        settled_by_id = {
+            row.get("references_event_id"): row
+            for row in rows
+            if row.get("record_type") == "settlement" and row.get("references_event_id")
+        }
+        outcomes = []
+        for row in rows:
+            same_market = str(row.get("market") or "").upper() == str(market or "").upper()
+            same_selection = str(row.get("selection") or "").upper() == str(selection or "").upper()
+            if not (same_market and same_selection):
+                continue
+            settlement = settled_by_id.get(row.get("event_id"))
+            outcome = settlement.get("outcome") if settlement else row.get("outcome")
+            if outcome not in (0, 1):
+                continue
+            probability = row.get("model_probability_raw")
+            try:
+                probability = float(probability) if probability is not None else None
+            except (TypeError, ValueError):
+                probability = None
+            outcomes.append({"outcome": int(outcome), "probability": probability})
+        calibrated = [row for row in outcomes if row["probability"] is not None and 0 <= row["probability"] <= 1]
+        n = len(outcomes)
+        return {
+            "market": str(market or "").upper(),
+            "selection": str(selection or "").upper(),
+            "settled_samples": n,
+            "wins": sum(row["outcome"] for row in outcomes),
+            "losses": sum(1 - row["outcome"] for row in outcomes),
+            "observed_hit_rate": (sum(row["outcome"] for row in outcomes) / n) if n else None,
+            "probability_samples": len(calibrated),
+            "mean_predicted_probability": (sum(row["probability"] for row in calibrated) / len(calibrated)) if calibrated else None,
+            "min_samples_for_diagnostic": max(20, int(min_samples)),
+            "diagnostic_ready": len(calibrated) >= max(20, int(min_samples)),
+        }
+
     def read(self) -> list[Dict[str, Any]]:
         if not self.path.exists():
             return []
