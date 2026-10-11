@@ -1,0 +1,65 @@
+name: Production Monte Carlo Smoke Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      event_id:
+        description: "SofaScore event ID for a fixture that should qualify"
+        required: true
+        type: string
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  production-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify production API is reachable
+        env:
+          API_BASE: https://sofascore-agent.vercel.app
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 20 "$API_BASE/openapi.json" -o openapi.json
+          python - <<'PY'
+          import json
+          with open("openapi.json", encoding="utf-8") as f:
+              spec = json.load(f)
+          paths = spec.get("paths", {})
+          required = "/analyze/fixture/{event_id}"
+          if required not in paths:
+              raise SystemExit(f"Production API missing required route: {required}")
+          print("Production API reachable; fixture analysis route is registered.")
+          PY
+
+      - name: Verify one-million-trial audit for requested fixture
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          API_BASE: https://sofascore-agent.vercel.app
+          EVENT_ID: ${{ inputs.event_id }}
+        run: |
+          set -euo pipefail
+          test -n "$EVENT_ID"
+          curl --fail --silent --show-error --max-time 180 "$API_BASE/analyze/fixture/$EVENT_ID" -o response.json
+          python - <<'PY'
+          import json
+          with open("response.json", encoding="utf-8") as f:
+              payload = json.load(f)
+          prediction = payload.get("prediction") or {}
+          audit = prediction.get("monte_carlo_audit") or {}
+          trials = int(audit.get("trials") or 0)
+          gate = audit.get("gate")
+          state = audit.get("state")
+          print(json.dumps({
+              "fixture_id": payload.get("fixture_id"),
+              "qualification": (payload.get("qualification") or {}).get("state"),
+              "prediction_state": prediction.get("state"),
+              "monte_carlo_audit": audit,
+          }, indent=2))
+          if trials < 1_000_000 or gate != "PASS" or state != "EXECUTED":
+              raise SystemExit("FAIL: live Monte Carlo audit did not prove >=1,000,000 executed trials with gate PASS.")
+          print("PASS: production response proves at least 1,000,000 Monte Carlo trials executed.")
+          PY
