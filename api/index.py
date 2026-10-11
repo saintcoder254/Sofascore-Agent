@@ -68,7 +68,23 @@ class VercelOriginalPathMiddleware:
             original_path = next(
                 (value for key, value in query if key == "__path"), None
             )
+
+            # Some Vercel routing paths omit rewritten query parameters. Recover
+            # the public path from platform routing headers before falling back
+            # to the ASGI path.
+            headers = {
+                key.decode("latin-1").lower(): value.decode("latin-1")
+                for key, value in scope.get("headers", [])
+            }
+            if not original_path:
+                original_path = headers.get("x-invoke-path") or headers.get("x-now-route-matches")
+                if original_path and "=" in original_path and "path=" in original_path:
+                    original_path = next(
+                        (part.split("=", 1)[1] for part in original_path.split("&") if part.startswith("path=")),
+                        original_path,
+                    )
             if original_path:
+                original_path = original_path.split("?", 1)[0]
                 if not original_path.startswith("/"):
                     original_path = "/" + original_path
                 scope = dict(scope)
