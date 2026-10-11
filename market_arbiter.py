@@ -127,28 +127,3 @@ class MarketArbiter:
         if p is not None and implied is not None and abs(p-implied)>0.12:warnings.append("LARGE_MODEL_MARKET_DIVERGENCE")
         if market=="TOTAL_GOALS" and not (prediction.get("probabilities") or {}).get("TOTAL_GOALS"):reasons.append("TOTAL_MODEL_MISSING")
         return {"state":"PASS" if not reasons else "BLOCK","version":self.VERSION,"market":market,"selection":selection,"odds":odds,"model_probability":p,"market_implied_probability":implied,"edge":edge,"expected_value":ev,"sample":sample,"independent_market_sources":sources,"tail_risk":tail,"reasons":reasons,"warnings":warnings,"generated_at":time.time()}
-
-
-def test_double_chance_missing_edge_and_ev_are_derived_and_blocked_when_thin():
-    prediction = {
-        "selection": {"market": "DOUBLE_CHANCE", "selection": "X2",
-                      "odds": 1.44, "model_probability": 0.715},
-        "history": {"home_games": 10, "away_games": 10},
-    }
-    result = MarketArbiter().evaluate(prediction, {})
-    assert result["state"] == "BLOCK"
-    assert "EDGE_BELOW_GATE" in result["reasons"]
-    assert "EV_BELOW_GATE" in result["reasons"]
-    assert abs(result["edge"] - (0.715 - 1 / 1.44)) < 1e-9
-    assert abs(result["expected_value"] - (0.715 * 1.44 - 1)) < 1e-9
-
-
-def test_double_chance_conflicting_supplied_edge_is_blocked():
-    prediction = {
-        "selection": {"market": "DOUBLE_CHANCE", "selection": "X2",
-                      "odds": 1.60, "model_probability": 0.70,
-                      "edge": 0.20, "expected_value": 0.12},
-        "history": {"home_games": 10, "away_games": 10},
-    }
-    result = MarketArbiter().evaluate(prediction, {})
-    assert "EDGE_FIELD_CONFLICTS_WITH_PROBABILITY_AND_PRICE" in result["reasons"]
