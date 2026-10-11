@@ -1,0 +1,33 @@
+{
+  "record_type": "retrospective_manual_audit",
+  "incident_key": "crystal-palace-nottingham-forest-2026-10-11-x2",
+  "fixture_id": "25741",
+  "home_team": "Crystal Palace",
+  "away_team": "Nottingham Forest",
+  "kickoff_local": "2026-10-11T16:00:00+03:00",
+  "market": "DOUBLE_CHANCE",
+  "selection": "X2",
+  "decimal_odds": 1.44,
+  "final_score": "3-1",
+  "outcome": 0,
+  "model_probability_raw": null,
+  "model_probability_note": "Native pipeline prediction was not verified. A prior independent/manual estimate of 0.715 existed but is not treated as a recorded model output.",
+  "verified_facts": [
+    "Ticket screenshot showed X2 at decimal odds 1.44",
+    "Final score was Crystal Palace 3-1 Nottingham Forest"
+  ],
+  "missing_evidence": [
+    "native prediction row",
+    "timestamped bookmaker odds snapshot",
+    "adverse-branch stress test",
+    "regime-sensitivity output",
+    "calibration evidence"
+  ],
+  "retrospective_gate_findings": [
+    "probability edge at the manual 0.715 estimate would be 0.02056, below the 0.03 gate floor",
+    "EV at the manual 0.715 estimate and 1.44 odds would be 0.0296, below the 0.03 gate floor",
+    "missing native evidence prevents claiming that the native gates ran"
+  ],
+  "root_cause_status": "UNRESOLVED_MODEL_CAUSE; process/evidence capture deficiency identified",
+  "notes": "Seed record only. Future live events are appended by FailureIncidentLedger; do not overwrite this row."
+}
