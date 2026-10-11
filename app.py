@@ -124,7 +124,7 @@ async def enrichment_loop():
                     if not AUTO_ANALYZE or passes >= AUTO_ANALYZE_MAX: continue
                     gate=qualifier.qualify(eid,bundle)
                     if gate.get("state")!="QUALIFIED": continue
-                    prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
+                    prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","1000000")))
                     arb=arbiter.decide(event,bundle,gate,prediction)
                     _persist_case_analysis(eid,bundle,prediction,arb)
                     if arb.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
@@ -294,7 +294,7 @@ async def analyze_fixture(event_id:str):
         except Exception as exc: logger.warning("ANALYSIS_CACHE_WRITE_FAILED event=%s error=%r",event_id,exc)
     gate=qualifier.qualify(event_id,bundle)
     analysis=core.analyze(event_id,bundle,gate)
-    prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
+    prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","1000000")))
     arbiter_decision=arbiter.decide(event,bundle,gate,prediction)
     case_summary=_persist_case_analysis(event_id,bundle,prediction,arbiter_decision)
     if arbiter_decision.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
@@ -455,7 +455,7 @@ async def _run_fixture_analysis(event_id: str):
             logger.warning("ANALYSIS_CACHE_WRITE_FAILED event=%s error=%r",event_id,exc)
     gate=qualifier.qualify(event_id,bundle)
     analysis=core.analyze(event_id,bundle,gate)
-    prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","10000")))
+    prediction=probability.run(event,bundle,gate,simulations=int(os.getenv("MONTE_CARLO_SAMPLES","1000000")))
     arbiter_decision=arbiter.decide(event,bundle,gate,prediction)
     case_summary=_persist_case_analysis(event_id,bundle,prediction,arbiter_decision)
     if arbiter_decision.get("state")=="FINAL_QUALIFIED" and prediction.get("selection"):
