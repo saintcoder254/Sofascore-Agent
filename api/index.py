@@ -47,3 +47,36 @@ async def api_root():
 async def favicon():
     """Browsers request a favicon automatically; no icon asset is required."""
     return Response(status_code=204)
+
+
+# Vercel rewrites to one Python function. Carry the original request path in
+# __path so FastAPI can dispatch /openapi.json, /events/today, and other routes
+# instead of receiving only the internal /api/index function path.
+from urllib.parse import parse_qsl, urlencode
+
+
+class VercelOriginalPathMiddleware:
+    def __init__(self, application):
+        self.application = application
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            query = parse_qsl(
+                scope.get("query_string", b"").decode("latin-1"),
+                keep_blank_values=True,
+            )
+            original_path = next(
+                (value for key, value in query if key == "__path"), None
+            )
+            if original_path:
+                if not original_path.startswith("/"):
+                    original_path = "/" + original_path
+                scope = dict(scope)
+                scope["path"] = original_path
+                scope["raw_path"] = original_path.encode("utf-8")
+                remaining = [(key, value) for key, value in query if key != "__path"]
+                scope["query_string"] = urlencode(remaining, doseq=True).encode("latin-1")
+        await self.application(scope, receive, send)
+
+
+app = VercelOriginalPathMiddleware(app)
