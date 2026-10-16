@@ -33,6 +33,12 @@ class FailureIncidentLedger:
             raise RuntimeError("DATABASE_URL is set but psycopg is not installed") from exc
         return psycopg.connect(self.database_url, connect_timeout=5)
 
+    def _require_storage(self) -> None:
+        """Disallow ephemeral JSONL storage in serverless/production runtimes."""
+        production = bool(os.getenv("VERCEL") or os.getenv("NODE_ENV", "").lower() == "production" or os.getenv("APP_ENV", "").lower() == "production")
+        if production and not self.database_url:
+            raise RuntimeError("DATABASE_URL is required for the production incident ledger; refusing ephemeral JSONL storage")
+
     def _ensure_database(self) -> None:
         # JSONB preserves the complete immutable event while event_id supports uniqueness.
         with self._connect() as conn:
@@ -55,6 +61,7 @@ class FailureIncidentLedger:
 
     def append(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """Append one immutable event; returns the exact persisted event."""
+        self._require_storage()
         event = dict(record)
         event.setdefault("event_id", str(uuid.uuid4()))
         event.setdefault("ledger_version", self.VERSION)
@@ -174,6 +181,7 @@ class FailureIncidentLedger:
         }
 
     def read(self) -> list[Dict[str, Any]]:
+        self._require_storage()
         if self.database_url:
             with self._connect() as conn:
                 with conn.cursor() as cur:
