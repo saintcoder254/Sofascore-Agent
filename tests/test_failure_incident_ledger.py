@@ -47,3 +47,16 @@ def test_historical_summary_joins_settlements_and_excludes_unsettled(tmp_path):
     assert summary["wins"] == 1
     assert summary["probability_samples"] == 1
     assert summary["diagnostic_ready"] is False
+
+
+def test_production_refuses_ephemeral_jsonl_without_database_url(tmp_path, monkeypatch):
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    ledger = FailureIncidentLedger(str(tmp_path / "incidents.jsonl"))
+    try:
+        ledger.append({"record_type": "prediction_audit", "fixture_id": "prod-no-db"})
+    except RuntimeError as exc:
+        assert "DATABASE_URL is required" in str(exc)
+    else:
+        raise AssertionError("production must not write the incident ledger to ephemeral JSONL")
+
