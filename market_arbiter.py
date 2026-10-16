@@ -3,7 +3,7 @@ import time
 
 class MarketArbiter:
     """Football market-selection firewall."""
-    VERSION="EMM-MARKET-ARBITER-v2.0"
+    VERSION="EMM-MARKET-ARBITER-v2.1"
     TOTALS={"TOTAL_GOALS","GOALS_OU","OVER_UNDER"}
     TEAM_TOTALS={"TEAM_GOALS","TEAM_TOTAL"}
     SUPPORTED={"1X2","BTTS","TOTAL_GOALS","DOUBLE_CHANCE","DNB","HANDICAP","CORNERS","CARDS","CORRECT_SCORE","TEAM_GOALS","TEAM_TOTAL"}
@@ -93,6 +93,19 @@ class MarketArbiter:
         edge=self._num(sel.get("edge")); ev=self._num(sel.get("expected_value"))
         hist=prediction.get("history") or {}; sample=min(int(hist.get("home_games") or 0),int(hist.get("away_games") or 0))
         reasons=[]; warnings=[]; implied=self._implied(odds)
+        # Double-chance/DNB valuation is recomputed from the actual model probability
+        # and decimal price; missing fields cannot silently bypass the value gates.
+        if market in {"DOUBLE_CHANCE", "DNB"} and p is not None and implied is not None:
+            derived_edge = p - implied
+            derived_ev = p * odds - 1.0
+            if edge is None:
+                edge = derived_edge
+            elif abs(edge - derived_edge) > 0.03:
+                reasons.append("EDGE_FIELD_CONFLICTS_WITH_PROBABILITY_AND_PRICE")
+            if ev is None:
+                ev = derived_ev
+            elif abs(ev - derived_ev) > 0.03:
+                reasons.append("EV_FIELD_CONFLICTS_WITH_PROBABILITY_AND_PRICE")
         if market not in self.SUPPORTED:reasons.append("UNSUPPORTED_MARKET")
         if p is None:reasons.append("MODEL_PROBABILITY_MISSING")
         if odds is None or odds<=1:reasons.append("INVALID_ODDS")
