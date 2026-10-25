@@ -1,4 +1,4 @@
-import math, random, re, time, os
+import bisect, math, random, re, time, os
 from collections import defaultdict
 from umios_market_models import UMIOSMarketModels
 from basketball_probability_engine import BasketballProbabilityEngine
@@ -117,16 +117,14 @@ class UMIOSProbabilityEngine:
         counts=defaultdict(int)
         if distribution:
             items=list(distribution.items())
-            cumulative=[]; running=0.0
+            cumulative=[]; scores=[]; running=0.0
             for score,prob in items:
-                running+=max(0.0,float(prob)); cumulative.append((running,score))
+                running+=max(0.0,float(prob)); cumulative.append(running); scores.append(score)
             if running<=0: raise ValueError("MONTE_CARLO_EMPTY_DISTRIBUTION")
             for _ in range(n):
                 draw=rng.random()*running
-                for bound,score in cumulative:
-                    if draw<=bound:
-                        counts[score]+=1
-                        break
+                index=bisect.bisect_left(cumulative,draw)
+                counts[scores[min(index,len(scores)-1)]]+=1
         else:
             for _ in range(n):
                 counts[(cls._sample_poisson(rng,lh),cls._sample_poisson(rng,la))]+=1
