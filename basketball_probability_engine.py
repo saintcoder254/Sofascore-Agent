@@ -117,8 +117,12 @@ class BasketballProbabilityEngine:
             if league_pace and league_pace>0:
                 factor=max(0.92,min(1.08,league_pace/100.0))
                 hp*=factor;ap*=factor
-        totals=hs+hc+as_+ac
-        empirical=[x+y for x,y in zip(hs[-5:],as_[-5:])]
+        # Each team's scored/conceded arrays are aligned by historical game.
+        # Build totals within each game; never add scores from unrelated fixtures.
+        home_totals=[scored+conceded for scored,conceded in zip(hs,hc)]
+        away_totals=[scored+conceded for scored,conceded in zip(as_,ac)]
+        totals=home_totals+away_totals
+        empirical=home_totals[-5:]+away_totals[-5:]
         sd=max(self._sd(empirical,12.0),self._sd(totals,13.0)*0.70)
         # Shared pace/scoring shock creates positive correlation between team scores.
         rho=0.18
