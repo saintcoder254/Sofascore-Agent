@@ -153,6 +153,18 @@ class UMIOSMarketModels:
     def evaluate(self,event,evidence):
         lh,la,n=self._goal_lambdas(event,evidence)
         grid=self._grid(lh,la)
+        # rho is configuration-only until chronologically fitted on historical data.
+        import os
+        rho=max(-0.20,min(0.20,float(os.getenv("DIXON_COLES_RHO","-0.05"))))
+        factors={(0,0):1.0-lh*la*rho,(0,1):1.0+lh*rho,
+                 (1,0):1.0+la*rho,(1,1):1.0-rho}
+        for score,factor in factors.items():
+            if score in grid:
+                grid[score]=max(0.0,grid[score]*max(0.0,factor))
+        total=sum(grid.values())
+        if total<=0:
+            raise ValueError("DIXON_COLES_INVALID_NORMALIZATION")
+        grid={score:value/total for score,value in grid.items()}
         one=sum(p for (h,a),p in grid.items() if h>a)
         draw=sum(p for (h,a),p in grid.items() if h==a)
         two=sum(p for (h,a),p in grid.items() if h<a)
@@ -190,7 +202,7 @@ class UMIOSMarketModels:
             for line in (2.5,3.5,4.5,5.5,6.5):
                 probs.setdefault("CARDS",{})[f"OVER {line}"]=self._poisson_tail(mean,"OVER",line)
                 probs["CARDS"][f"UNDER {line}"]=self._poisson_tail(mean,"UNDER",line)
-        return {"version":"UMIOS-MARKET-MODELS-v1","goal_lambdas":{"home":round(lh,4),"away":round(la,4)},"history_samples":n,"probabilities":probs,"market_meta":market_meta,"generated_at":time.time()}
+        return {"version":"UMIOS-MARKET-MODELS-v2","goal_lambdas":{"home":round(lh,4),"away":round(la,4)},"history_samples":n,"probabilities":probs,"market_meta":market_meta,"dixon_coles":{"applied":True,"rho":rho,"rho_source":"CONFIGURED_NOT_FITTED","promotion_blocked_until_fitted":True},"generated_at":time.time()}
 
     @staticmethod
     def model_for_market(result,market,selection):

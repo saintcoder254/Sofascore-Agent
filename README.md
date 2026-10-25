@@ -88,3 +88,18 @@ The hardening layer also includes:
 - `docs/UMIOS_TITAN_10_POINT_HARDENING.md` documenting the ten corrective controls.
 
 The model deliberately prefers NO_BET when the probability model, evidence regime or sample depth is inadequate. Monte Carlo sample count is a simulation parameter, not a substitute for correct model specification.
+
+
+## OMEGA validation and forensic endpoints
+
+- `GET /validation/calibration` runs the chronological walk-forward calibration pipeline against settled predictions, reports Brier/log-loss diagnostics and closing-line-value coverage, and keeps promotion disabled unless the evidence gates are independently satisfied.
+- `GET /audit/verify` checks registered case database files and verifies the tamper-evident hash chain in each case. Missing database files are reported as failures rather than silently recreated and treated as valid.
+- `GET /analyze/fixture/{event_id}/scenarios` executes the native fixture-analysis path and stores baseline/adverse goal-rate scenario records in the case audit chain.
+
+### Dixon-Coles correction status
+
+The probability engine now applies the Dixon-Coles low-score correction to the score grid and samples its Monte Carlo distribution from that same corrected grid. Configure `DIXON_COLES_RHO` (default `-0.05`; bounded to [-0.20, 0.20]). The current rho is explicitly marked `CONFIGURED_NOT_FITTED`; it is not an empirically estimated league parameter. This correction is enabled for shadow evaluation only and must not be promoted until rho is fitted on training-only historical data and passes chronological out-of-sample calibration.
+
+### Promotion remains fail-closed
+
+These endpoints make the validation work executable and auditable; they do not guarantee that the gates pass. A missing settled ledger, missing database, invalid hash chain, insufficient closing-line samples, non-positive CLV, or failed calibration must remain a blocker. The live service must still be checked through its deployed health/status endpoints, and persistent storage must be configured on the deployment platform.
