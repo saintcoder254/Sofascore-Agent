@@ -1,6 +1,6 @@
 import asyncio, os, time, logging, uuid, hashlib
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel, Field
 from feed_fusion import FeedFusionAdapter
 from integrity import FreshnessGate, ConflictGate
@@ -155,6 +155,129 @@ async def lifespan(app):
     for t in tasks:t.cancel()
     await asyncio.gather(*tasks,return_exceptions=True);await adapter.close();case_databases.close()
 app=FastAPI(title="Elite MatchMaster Feed Fusion Acquisition Agent",lifespan=lifespan)
+
+# Scheduled invocations are deliberately separate from public manual endpoints.
+# Configure MATCHMASTER_CRON_TOKEN in Vercel and GitHub Actions with the same
+# high-entropy value before enabling the scheduler.
+_cron_lock = asyncio.Lock()
+
+@app.post("/cron/run/{stage}")
+async def cron_run(stage: str, authorization: str | None = Header(default=None, alias="Authorization")):
+    import hmac
+    expected = os.getenv("MATCHMASTER_CRON_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="cron_not_configured")
+    if not authorization or not hmac.compare_digest(authorization.strip(), "Bearer " + expected):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    allowed = {"poll", "enrichment", "learning", "sources", "verify", "evolution", "research"}
+    if stage not in allowed:
+        raise HTTPException(status_code=404, detail="unknown_cron_stage")
+    if _cron_lock.locked():
+        raise HTTPException(status_code=409, detail="cron_stage_busy")
+    async with _cron_lock:
+        started = time.time()
+        try:
+            if stage == "poll":
+                result = {"events_stored": await poll_once()}
+            elif stage == "learning":
+                result = learning.run(reason="scheduled")
+                state["last_learning_at"] = result.get("created_at", time.time())
+            elif stage == "sources":
+                result = source_learning.run()
+                state["last_source_learning_at"] = result.get("created_at", time.time())
+            elif stage == "verify":
+                result = verification_learning.run()
+                state["last_verification_learning_at"] = time.time()
+            elif stage == "evolution":
+                result = evolution.run_cycle(reason="scheduled")
+                state["last_evolution_at"] = result.get("created_at", time.time())
+            elif stage == "research":
+                result = research.research_report()
+                state["last_research_at"] = result.get("generated_at", time.time())
+            else:
+                result = await enrich_once()
+            return {"ok": True, "stage": stage, "started_at": started,
+                    "finished_at": time.time(), "result": result}
+        except Exception as exc:
+            logger.exception("CRON_STAGE_FAILED stage=%s", stage)
+            raise HTTPException(status_code=500, detail={"stage": stage, "error": str(exc)})
+
+async def enrich_once():
+    """Run one bounded enrichment pass; safe to invoke from an external scheduler."""
+    data = await adapter.today_events()
+    now = time.time()
+    candidates = []
+    for event in data.get("events", []):
+        eid = str(event.get("id", ""))
+        if not eid:
+            continue
+        raw_date = event.get("startTimestamp") or event.get("timestamp") or event.get("date")
+        try:
+            ts = float(raw_date)
+            ts = ts / 1000 if ts > 1e12 else ts
+        except (TypeError, ValueError):
+            ts = None
+        if ts is not None and ts < now - 7200:
+            continue
+        candidates.append((abs((ts or now) - now), eid))
+    candidates = sorted(candidates)[:ENRICH_MAX_FIXTURES]
+    enriched = qualified = blocked = 0
+    for _, eid in candidates:
+        try:
+            bundle = await acquisition.acquire(eid)
+            event = bundle.get("event") or {}
+            if not event:
+                continue
+            event["data_trust"] = bundle.get("data_trust")
+            event["verification"] = bundle.get("verification")
+            store.put(eid, bundle.get("retrieved_at", time.time()), adapter.payload_hash(event), event)
+            case = case_databases.open(eid)
+            case.record_observation("ACQUISITION", "match_acquisition", "sofascore", event, status="RECEIVED")
+            if bundle.get("data_trust"):
+                case.record_trust(bundle["data_trust"])
+            case.close()
+            enriched += 1
+            if not AUTO_ANALYZE or qualified >= AUTO_ANALYZE_MAX:
+                continue
+            gate = qualifier.qualify(eid, bundle)
+            if gate.get("state") != "QUALIFIED":
+                continue
+            prediction = probability.run(event, bundle, gate,
+                simulations=int(os.getenv("MONTE_CARLO_SAMPLES", "1000000")))
+            arb = arbiter.decide(event, bundle, gate, prediction)
+            _persist_case_analysis(eid, bundle, prediction, arb)
+            selection = prediction.get("selection") or {}
+            if arb.get("state") == "FINAL_QUALIFIED" and selection:
+                stable = hashlib.sha256((str(eid) + "|" + str(selection["market"]) + "|" +
+                    str(selection["selection"]) + "|" +
+                    str(prediction.get("model", "UMIOS-TITAN-MarketSpecific-v3"))).encode()).hexdigest()
+                store.add_prediction(prediction_id=stable, fixture_id=eid,
+                    market=selection["market"], predicted_probability=selection["model_probability"],
+                    selection=selection["selection"], odds=selection["odds"],
+                    model_version=prediction.get("model", "UMIOS-TITAN-MarketSpecific-v3"),
+                    features={"expected_goals": prediction.get("expected_goals"),
+                        "expected_points": prediction.get("expected_points"),
+                        "expected_total": prediction.get("expected_total"),
+                        "distribution_sd": prediction.get("distribution_sd"),
+                        "history": prediction.get("history"), "edge": selection.get("edge"),
+                        "expected_value": selection.get("expected_value"),
+                        "simulations": prediction.get("simulations"),
+                        "form_trend": prediction.get("form_trend"),
+                        "competition_regime": prediction.get("competition_regime"),
+                        "model": prediction.get("model")})
+                qualified += 1
+                state["arbiter_passes"] = state.get("arbiter_passes", 0) + 1
+                state["last_auto_analyze_at"] = time.time()
+            elif prediction.get("state") == "QUALIFIED_PREDICTION":
+                blocked += 1
+                state["arbiter_blocks"] = state.get("arbiter_blocks", 0) + 1
+        except Exception as exc:
+            logger.warning("CRON_ENRICH_FAILED event=%s error=%r", eid, exc)
+    state["enrichment_items"] = enriched
+    state["auto_analyze_items"] = qualified
+    state["last_enrichment_at"] = time.time()
+    return {"candidate_count": len(candidates), "enriched": enriched,
+            "qualified_predictions": qualified, "blocked": blocked}
 
 @app.get("/", include_in_schema=False)
 async def api_root():
