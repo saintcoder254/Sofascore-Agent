@@ -96,12 +96,40 @@ class UMIOSProbabilityEngine:
         return k-1
 
     @classmethod
-    def _monte_carlo(cls,lh,la,n=10000,seed=None):
+    def _dixon_coles_grid(cls, grid, lh, la, rho):
+        """Apply Dixon-Coles low-score dependence correction; rho is configured, not fitted."""
+        rho=max(-0.20,min(0.20,float(rho)))
+        adjusted=dict(grid)
+        factors={(0,0):1.0-lh*la*rho,(0,1):1.0+lh*rho,
+                 (1,0):1.0+la*rho,(1,1):1.0-rho}
+        for score,factor in factors.items():
+            if score in adjusted:
+                adjusted[score]=max(0.0,adjusted[score]*max(0.0,factor))
+        total=sum(adjusted.values())
+        if total<=0:
+            raise ValueError("DIXON_COLES_INVALID_NORMALIZATION")
+        return {score:prob/total for score,prob in adjusted.items()}
+
+    @classmethod
+    def _monte_carlo(cls,lh,la,n=10000,seed=None,distribution=None):
         n=max(1000,int(n))
         rng=random.Random(seed if seed is not None else int(time.time()*1000))
         counts=defaultdict(int)
-        for _ in range(n):
-            counts[(cls._sample_poisson(rng,lh),cls._sample_poisson(rng,la))]+=1
+        if distribution:
+            items=list(distribution.items())
+            cumulative=[]; running=0.0
+            for score,prob in items:
+                running+=max(0.0,float(prob)); cumulative.append((running,score))
+            if running<=0: raise ValueError("MONTE_CARLO_EMPTY_DISTRIBUTION")
+            for _ in range(n):
+                draw=rng.random()*running
+                for bound,score in cumulative:
+                    if draw<=bound:
+                        counts[score]+=1
+                        break
+        else:
+            for _ in range(n):
+                counts[(cls._sample_poisson(rng,lh),cls._sample_poisson(rng,la))]+=1
         return {k:v/n for k,v in counts.items()}
 
     @staticmethod
@@ -208,7 +236,11 @@ class UMIOSProbabilityEngine:
         shrink=min(1.0,sample/10.0)
         lh=1.35+(lh-1.35)*shrink; la=1.05+(la-1.05)*shrink
         lh=max(0.15,min(4.5,lh)); la=max(0.15,min(4.5,la))
-        grid=self._grid(lh,la); mc=self._monte_carlo(lh,la,simulations,seed=f"{event.get('id','')}:{round(lh,4)}:{round(la,4)}")
+        rho=float(os.getenv("DIXON_COLES_RHO","-0.05"))
+        independent_grid=self._grid(lh,la)
+        grid=self._dixon_coles_grid(independent_grid,lh,la,rho)
+        seed=f"{event.get('id','')}:{round(lh,4)}:{round(la,4)}:dc:{rho}"
+        mc=self._monte_carlo(lh,la,simulations,seed=seed,distribution=grid)
         gp=self._market_probs(grid); mp=self._market_probs(mc)
         ensemble={m:{k:round(0.65*v+0.35*mp.get(m,{}).get(k,v),6) for k,v in items.items()} for m,items in gp.items()}
         dynamic_strength=self.dynamic_strength.evaluate(event,evidence)
@@ -234,7 +266,7 @@ class UMIOSProbabilityEngine:
             status="QUALIFIED" if history_gate and not suspicious and edge>=0.04 and ev>=0.05 and p>=0.55 else "REJECTED"
             candidates.append({"market":market,"selection":sel,"odds":row["odds"],"model_probability":round(p,4),"market_probability":round(row["market_probability"],4),"edge":round(edge,4),"expected_value":round(ev,4),"status":status,"suspicious_edge":suspicious})
         qualified=sorted((x for x in candidates if x["status"]=="QUALIFIED"),key=lambda x:(x["edge"],x["expected_value"]),reverse=True)
-        return {"state":"QUALIFIED_PREDICTION" if qualified else "NO_BET","model":"UMIOS-MarketSpecific+Poisson+MonteCarlo+FormTrend","model_independence":"MC_IS_NOT_AN_INDEPENDENT_SOURCE","simulations":simulations,"monte_carlo_audit":{"state":"EXECUTED","trials":simulations,"seed":str(event.get('id',''))+':'+str(round(lh,4))+':'+str(round(la,4)),"method":"independent Poisson score sampling","minimum_required":self.MIN_MONTE_CARLO_SAMPLES,"gate":"PASS"},
+        return {"state":"QUALIFIED_PREDICTION" if qualified else "NO_BET","model":"UMIOS-MarketSpecific+Poisson+MonteCarlo+FormTrend","model_independence":"MC_IS_NOT_AN_INDEPENDENT_SOURCE","simulations":simulations,"monte_carlo_audit":{"state":"EXECUTED","trials":simulations,"seed":str(event.get('id',''))+':'+str(round(lh,4))+':'+str(round(la,4)),"method":"categorical sampling from Dixon-Coles-corrected score grid","dixon_coles":{"applied":True,"rho":rho,"rho_source":"CONFIGURED_NOT_FITTED","promotion_blocked_until_fitted":True},"minimum_required":self.MIN_MONTE_CARLO_SAMPLES,"gate":"PASS"},
                 "expected_goals":{"home":round(lh,3),"away":round(la,3)},"history":{"home_games":hh["games"],"away_games":aa["games"],"minimum_games":sample},"omega_empirical":empirical,"omega_model_stability":{"theoretical_vs_empirical_available":bool(empirical.get("available")),"empirical_weight":empirical.get("empirical_weight") if empirical.get("available") else None,"empirical_influences_live_ensemble":False,"empirical_quarantine_weight":empirical_live_weight},
                 "dynamic_strength":dynamic_strength,"competition_regime":competition_regime,
                 "form_trend":{"home":round(self._trend(hh),4),"away":round(self._trend(aa),4)},"probabilities":ensemble,"market_models":market_specific,
