@@ -576,14 +576,24 @@ async def validation_calibration():
     report=omega_calibration.run(ledger)
     from calibration_engine import CalibrationEngine
     raw=CalibrationEngine().evaluate([{"p":r["p"],"y":r["y"]} for r in ledger])
+    clv_rows=[]
+    for row in rows:
+        try:
+            taken=float(row.get("odds") or 0); closing=float(row.get("closing_odds") or 0)
+            if taken>1 and closing>1:
+                clv_rows.append((closing/taken)-1.0)
+        except (TypeError,ValueError):
+            continue
+    avg_clv=(sum(clv_rows)/len(clv_rows)) if clv_rows else None
     return {
         "service":"OMEGA chronological calibration",
         "state":report.get("state","SHADOW"),
         "calibration":report,
         "settled_samples":len(ledger),
         "raw_metrics":raw,
+        "closing_line_benchmark":{"samples":len(clv_rows),"average_clv":avg_clv,"positive":bool(avg_clv is not None and avg_clv>0)},
         "promotion_allowed":False,
-        "promotion_blockers":["DIXON_COLES_RHO_NOT_EMPIRICALLY_FITTED","LIVE_DEPLOYMENT_NOT_VERIFIED","OUT_OF_SAMPLE_AND_CLOSING_MARKET_GATES_REQUIRE_REVIEW"] if report.get("state")!="EVALUATED" or not report.get("candidate_pass") else ["PROMOTION_REQUIRES_SEPARATE_MARKET_BENCHMARK_AND_INTEGRITY_APPROVAL"],
+        "promotion_blockers":["DIXON_COLES_RHO_NOT_EMPIRICALLY_FITTED","LIVE_DEPLOYMENT_NOT_VERIFIED","INSUFFICIENT_OR_FAILED_WALK_FORWARD_CALIBRATION"] if report.get("state")!="EVALUATED" or not report.get("candidate_pass") else (["INSUFFICIENT_CLOSING_LINE_VALUE_SAMPLES"] if len(clv_rows)<20 else (["NON_POSITIVE_CLOSING_LINE_VALUE"] if avg_clv is None or avg_clv<=0 else ["PROMOTION_REQUIRES_INDEPENDENT_INTEGRITY_REVIEW"])),
         "generated_at":time.time(),
     }
 
@@ -595,6 +605,9 @@ async def verify_persistent_audit(limit:int=500):
     for item in cases:
         case=None
         try:
+            if not os.path.isfile(item.get("db_path","")):
+                checked.append({"case_id":item.get("case_id"),"chain_valid":False,"error":"CASE_DATABASE_FILE_MISSING"})
+                continue
             case=case_databases.open(item["case_id"])
             chain=case.verify_chain()
             summary=case.summary()
