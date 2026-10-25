@@ -552,3 +552,122 @@ async def fusion_feed():
     for row in store.current():
         s,a,r=fresh.evaluate(row["retrieved_at"]);output.append({"fixture_id":row["fixture_id"],"eligible":s=="FRESH","integrity_status":s,"age_seconds":a,"reason":r,"data":row["payload"] if s=="FRESH" else None})
     return {"source":state["active_source"] or adapter.active_source,"generated_at":time.time(),"telemetry":telemetry_payload(),"items":output}
+
+
+@app.get("/validation/calibration")
+async def validation_calibration():
+    """Run chronological calibration diagnostics on settled, persisted predictions."""
+    rows=store.predictions_with_outcomes()
+    ledger=[]
+    for row in rows:
+        try:
+            if row.get("outcome") is None:
+                continue
+            ledger.append({
+                "p": float(row["predicted_probability"]),
+                "y": float(row["outcome"]),
+                "predicted_at": float(row.get("predicted_at") or row.get("created_at") or 0),
+                "fixture_id": str(row.get("fixture_id") or ""),
+                "market": str(row.get("market") or ""),
+                "model": str(row.get("model_version") or "unknown"),
+            })
+        except (TypeError, ValueError, KeyError):
+            continue
+    report=omega_calibration.run(ledger)
+    from calibration_engine import CalibrationEngine
+    raw=CalibrationEngine().evaluate([{"p":r["p"],"y":r["y"]} for r in ledger])
+    return {
+        "service":"OMEGA chronological calibration",
+        "state":report.get("state","SHADOW"),
+        "calibration":report,
+        "settled_samples":len(ledger),
+        "raw_metrics":raw,
+        "promotion_allowed":False,
+        "promotion_blockers":["DIXON_COLES_RHO_NOT_EMPIRICALLY_FITTED","LIVE_DEPLOYMENT_NOT_VERIFIED","OUT_OF_SAMPLE_AND_CLOSING_MARKET_GATES_REQUIRE_REVIEW"] if report.get("state")!="EVALUATED" or not report.get("candidate_pass") else ["PROMOTION_REQUIRES_SEPARATE_MARKET_BENCHMARK_AND_INTEGRITY_APPROVAL"],
+        "generated_at":time.time(),
+    }
+
+@app.get("/audit/verify")
+async def verify_persistent_audit(limit:int=500):
+    """Verify every registered case's hash chain and the central case registry."""
+    cases=case_databases.list_cases(limit=max(1,min(1000,limit)))
+    checked=[]
+    for item in cases:
+        case=None
+        try:
+            case=case_databases.open(item["case_id"])
+            chain=case.verify_chain()
+            summary=case.summary()
+            checked.append({
+                "case_id":item["case_id"],
+                "database_path":item["db_path"],
+                "chain_valid":bool(chain.get("valid")),
+                "events":chain.get("events",0),
+                "failures":chain.get("failures",[]),
+                "counts":summary.get("counts",{}),
+                "simulation_records":summary.get("counts",{}).get("model_runs",0),
+            })
+        except Exception as exc:
+            checked.append({"case_id":item.get("case_id"),"chain_valid":False,"error":repr(exc)})
+        finally:
+            if case is not None:
+                case.close()
+    failed=[x for x in checked if not x.get("chain_valid")]
+    return {
+        "state":"PASS" if checked and not failed else "BLOCKED",
+        "cases_checked":len(checked),
+        "valid_cases":len(checked)-len(failed),
+        "failed_cases":failed,
+        "reason":None if checked and not failed else ("NO_CASES_REGISTERED" if not checked else "AUDIT_INTEGRITY_FAILURE"),
+        "persistent_storage_configured":bool(CASE_DB_DIR),
+        "generated_at":time.time(),
+    }
+
+@app.get("/analyze/fixture/{event_id}/scenarios")
+async def analyze_fixture_scenarios(event_id:str):
+    """Execute native fixture analysis, then persist deterministic adverse-rate scenarios."""
+    result=await _run_fixture_analysis(event_id)
+    prediction=result.get("prediction") or {}
+    if prediction.get("state")=="NO_BET" and not prediction.get("expected_goals"):
+        return {"state":"BLOCKED","reason":"BASE_NATIVE_ANALYSIS_DID_NOT_PRODUCE_GOAL_RATES","base_analysis":result,"scenarios":[]}
+    expected=prediction.get("expected_goals") or {}
+    try:
+        base_home=float(expected["home"]); base_away=float(expected["away"])
+    except (KeyError,TypeError,ValueError):
+        return {"state":"BLOCKED","reason":"NATIVE_GOAL_RATES_MISSING","base_analysis":result,"scenarios":[]}
+    rho=float(os.getenv("DIXON_COLES_RHO","-0.05"))
+    shocks=[
+        {"name":"BASELINE","home_multiplier":1.0,"away_multiplier":1.0},
+        {"name":"HOME_ATTACK_DOWN_20","home_multiplier":0.8,"away_multiplier":1.0},
+        {"name":"AWAY_ATTACK_DOWN_20","home_multiplier":1.0,"away_multiplier":0.8},
+        {"name":"BOTH_ATTACKS_DOWN_20","home_multiplier":0.8,"away_multiplier":0.8},
+        {"name":"AWAY_ATTACK_UP_20","home_multiplier":1.0,"away_multiplier":1.2},
+        {"name":"HOME_ATTACK_UP_20","home_multiplier":1.2,"away_multiplier":1.0},
+    ]
+    scenarios=[]
+    case=case_databases.open(event_id)
+    try:
+        for scenario in shocks:
+            lh=max(0.15,min(4.5,base_home*scenario["home_multiplier"]))
+            la=max(0.15,min(4.5,base_away*scenario["away_multiplier"]))
+            independent=probability._grid(lh,la)
+            grid=probability._dixon_coles_grid(independent,lh,la,rho)
+            probs=probability._market_probs(grid)
+            row={**scenario,"expected_goals":{"home":round(lh,4),"away":round(la,4)},"probabilities":probs,"dixon_coles":{"rho":rho,"rho_source":"CONFIGURED_NOT_FITTED"}}
+            scenarios.append(row)
+            case.record_model_run("OMEGA-SCENARIO-STRESS",scenario["name"],row,0,{"fixture_id":event_id,"base_prediction":prediction.get("model"),"base_goal_rates":expected})
+        audit=case.verify_chain()
+    finally:
+        case.close()
+    return {
+        "state":"COMPLETED_SHADOW" if audit.get("valid") else "BLOCKED",
+        "fixture_id":event_id,
+        "native_base_analysis_state":prediction.get("state"),
+        "native_monte_carlo_audit":prediction.get("monte_carlo_audit"),
+        "scenario_count":len(scenarios),
+        "scenarios":scenarios,
+        "persistent_audit":audit,
+        "promotion_allowed":False,
+        "promotion_blockers":["DIXON_COLES_RHO_NOT_EMPIRICALLY_FITTED","SCENARIO_STRESS_IS_NOT_OUT_OF_SAMPLE_VALIDATION"],
+        "generated_at":time.time(),
+    }
