@@ -43,6 +43,42 @@ Telemetry records poll count, source success/failure, freshness, request latency
 
 The application uses `DATABASE_PATH` for its SQLite database (default: `matchmaster.db`) and `CASE_DATABASE_DIR` for fixture case files (default: `case_databases`). Configure these paths for the runtime environment and mount persistent storage where durable history is required. Without persistent storage, local database files may not survive instance replacement or redeployment.
 
+## Scheduled execution on Vercel
+
+Vercel does not keep the application's in-process polling and learning loops alive. The
+GitHub Actions workflow at `.github/workflows/matchmaster-scheduler.yml` invokes
+authenticated one-shot stages instead:
+
+- Every 5 minutes: poll fixtures, enrich/analyze a bounded fixture set, run learning,
+  score sources, and verify results.
+- Every 6 hours: run evolution and research.
+- A manual workflow dispatch is available for an operator-triggered run.
+
+Before the workflow can run, configure these values:
+
+1. In Vercel Project Settings → Environment Variables, set `MATCHMASTER_CRON_TOKEN`
+   to a long random secret (at least 32 random bytes), then redeploy.
+2. In GitHub repository Settings → Secrets and variables → Actions, add
+   `MATCHMASTER_CRON_TOKEN` with exactly the same value.
+3. Add `MATCHMASTER_BASE_URL` as a GitHub Actions repository secret, set to the
+   deployed API base URL (for example `https://sofascore-agent.vercel.app`, without a
+   trailing slash).
+4. Run the `MatchMaster scheduled pipeline` workflow manually once and inspect every
+   stage's response and the Vercel function logs. Then confirm `/health`, `/status`,
+   and `/learning/omega/oos` after a real settled fixture is recorded.
+
+The `POST /cron/run/{stage}` endpoint requires `Authorization: Bearer <token>` and
+returns 503 if the Vercel token is missing or 401 for an invalid token. Never place the
+token in a URL, source file, workflow YAML, or logs.
+
+**Persistence limitation:** this scheduler does not make SQLite durable. The default
+`matchmaster.db` and per-fixture files in `case_databases` can be lost when Vercel
+replaces an instance, and separate serverless instances may not share their local files.
+Do not mark operational correctness as passed until durable shared storage is configured
+and a redeploy-retention test proves that predictions, outcomes, odds snapshots, and
+case audit chains survive. The scheduled workflow is also not active until the required
+secrets are configured.
+
 ## Local
 
 ```bash
